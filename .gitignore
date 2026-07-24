@@ -1,0 +1,36 @@
+# Build
+/target/
+**/target/
+dist/
+node_modules/
+
+# Local agent / process governance (not published to GitHub)
+.agents/
+AGENTS.md
+conductor/
+Plan.md
+
+# Ledgerful / AI brains local state
+.ledgerful/
+.env
+.env.local
+
+# Generated / temp
+/output/
+*.log
+
+# Large or copyrighted fixtures (keep samples + notes only)
+fixtures/_extract/
+fixtures/*.3mf
+!fixtures/samples/**
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Tauri / frontend
+apps/desktop/src-tauri/target/
+apps/desktop/dist/

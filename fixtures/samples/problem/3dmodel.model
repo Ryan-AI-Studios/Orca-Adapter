@@ -1,0 +1,108 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" unit="millimeter" xml:lang="en-US" requiredextensions="p" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">
+ <metadata name="Application">BambuStudio-02.07.01.62</metadata>
+ <metadata name="BambuStudio:3mfVersion">1</metadata>
+ <metadata name="CopyRight">[]</metadata>
+ <metadata name="Copyright">[]</metadata>
+ <metadata name="CreationDate">2026-07-20</metadata>
+ <metadata name="Description">&amp;lt;p&amp;gt;Toy story inspired dumplings- prints in place.&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;amp;nbsp;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;Logo can be shaped in a curve right off of the hot plate.  If it has cooled already, you can use heat of your choice to warm it up and curve it.&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;amp;nbsp;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;Adding logo to the dumpling container.&amp;lt;br&amp;gt;&amp;lt;span style=&amp;#34;background-color: rgb(255,255,255)&amp;#34;&amp;gt;Step 1: Print the Parts Print all required 3D parts. Ensure surfaces are clean and dry before applying the logo. &amp;lt;/span&amp;gt;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;lt;span style=&amp;#34;background-color: rgb(255,255,255)&amp;#34;&amp;gt;Step 2: Apply Glue to the logo Place the label face down. Apply a thin, even layer of E6000 glue to the back of the logo. Avoid excess glue near the edges. &amp;lt;/span&amp;gt;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;lt;span style=&amp;#34;background-color: rgb(255,255,255)&amp;#34;&amp;gt;Step 3: Position the logo in the desired area. Press gently to ensure full contact. &amp;lt;/span&amp;gt;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;lt;span style=&amp;#34;background-color: rgb(255,255,255)&amp;#34;&amp;gt;Step 4: Secure the logo with a rubber band or painter’s tape to hold it in place while drying. &amp;lt;/span&amp;gt;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;amp;nbsp;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;lt;span style=&amp;#34;background-color: rgb(255,255,255)&amp;#34;&amp;gt;Allow it to dry completely, preferably overnight&amp;lt;/span&amp;gt;&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;&amp;lt;br&amp;gt; &amp;lt;/p&amp;gt;</metadata>
+ <metadata name="DesignModelId">US67300061a1daf1</metadata>
+ <metadata name="DesignProfileId">886698893</metadata>
+ <metadata name="DesignRegion">US</metadata>
+ <metadata name="Designer">Ada &amp; K 3DA</metadata>
+ <metadata name="DesignerCover">8755d864f1b704f1.jpg</metadata>
+ <metadata name="DesignerUserId">2668076285</metadata>
+ <metadata name="License">Standard Digital File License</metadata>
+ <metadata name="ModificationDate">2026-07-20</metadata>
+ <metadata name="Origin">original</metadata>
+ <metadata name="ProfileCover">dc8be40629b3d4ce.jpg</metadata>
+ <metadata name="ProfileDescription" />
+ <metadata name="ProfileTitle">Dumpling Box and Logo- read instructions in description</metadata>
+ <metadata name="ProfileUserId">2668076285</metadata>
+ <metadata name="ProfileUserName">Ada &amp; K 3DA</metadata>
+ <metadata name="Thumbnail_Middle">/Metadata/plate_1.png</metadata>
+ <metadata name="Thumbnail_Small">/Metadata/plate_1_small.png</metadata>
+ <metadata name="Title">toy story dumplings</metadata>
+ <resources>
+  <object id="2" p:UUID="00000015-61cb-4c03-9d28-80fed5dfa1dc" type="model">
+   <components>
+    <component p:path="/3D/Objects/object_21.model" objectid="1" p:UUID="00150000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 0" />
+   </components>
+  </object>
+  <object id="6" p:UUID="00000016-61cb-4c03-9d28-80fed5dfa1dc" type="model">
+   <components>
+    <component p:path="/3D/Objects/object_22.model" objectid="3" p:UUID="00160000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 0 -1.22291958" />
+    <component p:path="/3D/Objects/object_22.model" objectid="4" p:UUID="00160001-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -7.43865967e-05 1.90734863e-05 0.453333616" />
+    <component p:path="/3D/Objects/object_22.model" objectid="5" p:UUID="00160002-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 0 1.52587891e-05 -5.13641262" />
+   </components>
+  </object>
+  <object id="66" p:UUID="00000023-61cb-4c03-9d28-80fed5dfa1dc" type="model">
+   <components>
+    <component p:path="/3D/Objects/object_35.model" objectid="7" p:UUID="00230000-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 21.1590595 23.5474377 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="8" p:UUID="00230001-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 31.2033958 22.3548831 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="9" p:UUID="00230002-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 31.4875698 21.329073 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="10" p:UUID="00230003-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 31.9705487 19.5079403 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="11" p:UUID="00230004-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 32.5800743 17.1823597 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="12" p:UUID="00230005-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 32.7254143 16.6279316 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="13" p:UUID="00230006-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 33.6637459 16.8825931 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="14" p:UUID="00230007-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 38.3590813 22.0145702 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="15" p:UUID="00230008-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 44.8856239 14.5232191 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="16" p:UUID="00230009-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 36.9829674 -3.70943499 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="17" p:UUID="0023000a-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 42.1333656 -11.5312061 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="18" p:UUID="0023000b-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 43.5203094 -17.9440727 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="19" p:UUID="0023000c-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -15.0372715 -24.2120647 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="20" p:UUID="0023000d-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -14.8503141 -22.6908436 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="21" p:UUID="0023000e-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -14.6359043 -20.9382992 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="22" p:UUID="0023000f-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -13.8959322 -14.9068413 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="23" p:UUID="00230010-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -13.8329315 -14.4174071 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="24" p:UUID="00230011-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -13.4118195 -10.9869871 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="25" p:UUID="00230012-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -12.2096901 -1.66652739 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="26" p:UUID="00230013-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -8.20968914 -3.61740613 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="27" p:UUID="00230014-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -8.1284399 -4.32990599 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="28" p:UUID="00230015-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -8.04172039 -1.81115615 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="29" p:UUID="00230016-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -9.08417034 7.71853113 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="30" p:UUID="00230017-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -15.3631563 9.68068981 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="31" p:UUID="00230018-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -16.744009 20.2336598 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="32" p:UUID="00230019-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -15.254221 20.4107189 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="33" p:UUID="0023001a-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -14.6885233 20.4743824 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="34" p:UUID="0023001b-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -13.952054 20.5556011 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="35" p:UUID="0023001c-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -13.4045076 20.6148319 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="36" p:UUID="0023001d-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -10.3404207 20.9547291 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="37" p:UUID="0023001e-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -9.87823772 21.0093937 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="38" p:UUID="0023001f-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -0.578372538 22.037159 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="39" p:UUID="00230020-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 1.88882101 22.3095684 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="40" p:UUID="00230021-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 4.15677118 22.5638504 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="41" p:UUID="00230022-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 5.35463572 22.6962662 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="42" p:UUID="00230023-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 8.2986784 16.9326668 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="43" p:UUID="00230024-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 9.79870892 17.4300557 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="44" p:UUID="00230025-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 11.2739038 17.9357185 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="45" p:UUID="00230026-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 12.8968229 18.2824269 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="46" p:UUID="00230027-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 13.24191 18.3267842 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="47" p:UUID="00230028-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 16.3298912 18.3229923 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="48" p:UUID="00230029-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 16.1394253 -0.586158752 0.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="49" p:UUID="0023002a-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 16.1394253 -0.586158752 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="50" p:UUID="0023002b-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 14.8083589 5.11459446 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="51" p:UUID="0023002c-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -4.07602238 7.6622324 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="52" p:UUID="0023002d-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 33.3224926 8.51065231 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="53" p:UUID="0023002e-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 14.4905729 -13.3326646 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="54" p:UUID="0023002f-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 13.062191 -13.4799185 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="55" p:UUID="00230030-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 23.4246979 -12.0752249 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="56" p:UUID="00230031-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 16.1397495 7.80179262 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="57" p:UUID="00230032-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 14.8528414 5.30601639 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="58" p:UUID="00230033-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 13.0723715 -13.7088556 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="59" p:UUID="00230034-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 -4.58540371 -13.6471186 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="60" p:UUID="00230035-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 23.7591038 -13.7174311 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="61" p:UUID="00230036-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 33.074728 -13.706481 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="62" p:UUID="00230037-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 4.00359157 -13.6799059 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="63" p:UUID="00230038-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 14.71158 -5.56984162 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="64" p:UUID="00230039-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 14.8856411 5.30055666 1.5" />
+    <component p:path="/3D/Objects/object_35.model" objectid="65" p:UUID="0023003a-b206-40ff-9872-83e8017abed1" transform="1 0 0 0 1 0 0 0 1 3.08875394 11.3450823 1.5" />
+   </components>
+  </object>
+ </resources>
+ <build p:UUID="2c7c17d8-22b5-4d84-8835-1976022ea369">
+  <item objectid="2" p:UUID="00000002-b1ec-4553-aec9-835e5b724bb4" transform="0.999999998 3.9430934e-05 3.94311464e-05 -3.94311464e-05 0.999999999 5.38513404e-06 -3.9430934e-05 -5.38668885e-06 0.999999999 531.83733 224.516642 25.3177786" printable="1" />
+  <item objectid="6" p:UUID="00000006-b1ec-4553-aec9-835e5b724bb4" transform="0.999010843 0 0 0 0.999010843 0 0 0 0.999010843 526.77569 124.45774 6.19411022" printable="1" />
+  <item objectid="66" p:UUID="00000042-b1ec-4553-aec9-835e5b724bb4" transform="0.763478299 0 0 0 -0.763478299 0 0 0 -0.30539132 173.613672 153.519446 0.61078264" printable="1" />
+ </build>
+</model>
