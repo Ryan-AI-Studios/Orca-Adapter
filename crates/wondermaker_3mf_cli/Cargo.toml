@@ -1,0 +1,16 @@
+[package]
+name = "wondermaker_3mf_cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI for Wondermaker 3MF analyze + convert"
+
+[[bin]]
+name = "wondermaker_3mf_cli"
+path = "src/main.rs"
+
+[dependencies]
+wondermaker_3mf_core = { workspace = true }
+clap = { workspace = true }
+camino = { workspace = true }
+anyhow = { workspace = true }

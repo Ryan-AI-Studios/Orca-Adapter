@@ -127,9 +127,11 @@ Multi-plate must be preserved via keeping `model_settings` + geometry.
 
 2. **Replace** from clean template:
    - `Metadata/project_settings.config` **entire file**
-   - Optionally patch template filament colours/types after replace if user remaps
+   - **Must** patch `filament_colour` (and `filament_multi_colour` if present) from the **source** into the grafted JSON so Prepare-view swatches match part extruders (even when the map is identity). This fixture’s colours happen to match the template palette, but other MakerWorld files will not.
+   - Prefer keep template `filament_settings_id` / machine filament params; optional `filament_type` label copy when lengths match.
 
 3. **Strip / neutralize:**
+   - `Metadata/custom_gcode_per_layer.xml` — **always strip** if present (Bambu tool-change / layer custom G-code)
    - `Metadata/slice_info.config` → empty Wonderprint-style header or rewrite Application version
    - `Metadata/filament_sequence.json` — H2C nozzle sequence; **drop or reset empty**
    - `Metadata/cut_information.xml` — keep if cut features needed; verify load (low risk)
