@@ -1,31 +1,91 @@
-//! S1 settings graft conversion with optional slot-map remaps and markdown reports.
+//! S1 settings graft and S2 template-shell conversion with slot-map remaps and reports.
 
-use std::collections::BTreeMap;
-use std::fs::File;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
+use std::str::FromStr;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use zip::{ZipArchive, ZipWriter};
 
 use crate::error::{Error, Result};
 use crate::model_settings::{
-    ExtruderRemapStats, parse_model_settings, remap_model_settings_extruders,
+    ExtruderRemapStats, collect_unknown_subtypes, parse_model_settings,
+    remap_model_settings_extruders,
+};
+use crate::opc::{
+    CONTENT_TYPES, is_content_types_member, is_rels_member, rels_parent_dir, remaining_extensions,
+    strip_content_types_orphans, strip_rels_orphans,
 };
 use crate::paint::{PaintRemapStats, collect_paint_source_slots, remap_model_paint};
 use crate::paths::{
     MODEL_SETTINGS, PROJECT_SETTINGS, SLICE_INFO, default_report_path, is_3d_model_member,
     normalize_zip_path, paths_equal, should_strip_member,
 };
+use crate::s2::{S2Options, convert_s2_archives};
 use crate::settings::{
+    BED_COMPARE_EPS_MM, bed_compare_message, bed_size_mm, bed_source_exceeds_template,
     graft_filament_colours, parse_project_settings, reorder_filament_colours,
     serialize_project_settings, string_array_field, string_field,
 };
 use crate::slot_map::SlotMap;
 use crate::zip_util::{
-    create_writer, open_archive, read_member_bytes, slice_info_stub, write_member,
+    member_exists, open_archive, read_member_bytes, slice_info_stub, write_member,
 };
 
-/// Options for S1 settings-graft conversion.
+/// Conversion strategy selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConvertStrategy {
+    /// S1 when source has project_settings; S2 otherwise.
+    #[default]
+    Auto,
+    /// Settings graft — requires source `Metadata/project_settings.config`.
+    S1,
+    /// Template shell + inject source geometry.
+    S2,
+}
+
+impl ConvertStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::S1 => "s1",
+            Self::S2 => "s2",
+        }
+    }
+}
+
+impl FromStr for ConvertStrategy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "s1" => Ok(Self::S1),
+            "s2" => Ok(Self::S2),
+            other => Err(Error::msg(format!(
+                "invalid strategy '{other}'; expected auto|s1|s2"
+            ))),
+        }
+    }
+}
+
+/// Resolved strategy actually used for a conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedStrategy {
+    S1,
+    S2,
+}
+
+impl ResolvedStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::S1 => "S1",
+            Self::S2 => "S2",
+        }
+    }
+}
+
+/// Options for conversion (disk paths).
 #[derive(Debug, Clone)]
 pub struct ConvertOptions {
     pub source: Utf8PathBuf,
@@ -39,6 +99,10 @@ pub struct ConvertOptions {
     pub write_report: bool,
     /// Optional explicit report path; default is `<output-stem>-conversion-report.md`.
     pub report_path: Option<Utf8PathBuf>,
+    /// When true, error if source bed exceeds template bed (eps ~0.5 mm).
+    pub strict_bed: bool,
+    /// Conversion strategy (default Auto).
+    pub strategy: ConvertStrategy,
 }
 
 impl ConvertOptions {
@@ -55,6 +119,8 @@ impl ConvertOptions {
             copy_filament_type: true,
             write_report: true,
             report_path: None,
+            strict_bed: false,
+            strategy: ConvertStrategy::Auto,
         }
     }
 
@@ -67,12 +133,40 @@ impl ConvertOptions {
     }
 }
 
+/// In-memory conversion options (tests / library callers without disk paths).
+#[derive(Debug, Clone)]
+pub struct ArchiveConvertOptions {
+    pub slot_map: SlotMap,
+    pub copy_filament_type: bool,
+    pub strict_bed: bool,
+    pub strategy: ConvertStrategy,
+}
+
+impl Default for ArchiveConvertOptions {
+    fn default() -> Self {
+        Self {
+            slot_map: SlotMap::identity(),
+            copy_filament_type: true,
+            strict_bed: false,
+            strategy: ConvertStrategy::Auto,
+        }
+    }
+}
+
+impl ArchiveConvertOptions {
+    pub fn with_slot_map(mut self, map: SlotMap) -> Self {
+        self.slot_map = map;
+        self
+    }
+}
+
 /// Report produced by a successful convert.
 #[derive(Debug, Clone)]
 pub struct ConversionReport {
     pub source: Utf8PathBuf,
     pub template: Utf8PathBuf,
     pub output: Utf8PathBuf,
+    pub strategy: ResolvedStrategy,
     pub source_printer: Option<String>,
     pub output_printer: Option<String>,
     pub stripped_members: Vec<String>,
@@ -89,14 +183,15 @@ pub struct ConversionReport {
     pub colours_after: Vec<String>,
     pub warnings: Vec<String>,
     pub entry_count: usize,
+    /// True when Content_Types / rels were rewritten for orphan strip or S2 merge.
+    pub opc_reconciled: bool,
 }
 
-/// Convert via S1 settings graft (disk paths).
+/// Convert via strategy Auto/S1/S2 (disk paths).
 pub fn convert(opts: &ConvertOptions) -> Result<ConversionReport> {
     if paths_equal(&opts.source, &opts.output) {
         return Err(Error::OutputEqualsInput(opts.output.clone()));
     }
-    // Also refuse if output equals template (would clobber donor)
     if paths_equal(&opts.template, &opts.output) {
         return Err(Error::msg(format!(
             "output path must differ from template path: {}",
@@ -107,255 +202,85 @@ pub fn convert(opts: &ConvertOptions) -> Result<ConversionReport> {
     let mut source_archive = open_archive(&opts.source)?;
     let mut template_archive = open_archive(&opts.template)?;
 
-    let source_settings_bytes = read_member_bytes(&mut source_archive, PROJECT_SETTINGS)?;
-    let template_settings_bytes = read_member_bytes(&mut template_archive, PROJECT_SETTINGS)?;
+    let has_ps = member_exists(&mut source_archive, PROJECT_SETTINGS);
+    let resolved = resolve_strategy(opts.strategy, has_ps)?;
 
-    let source_settings = parse_project_settings(&source_settings_bytes)?;
-    let mut grafted = parse_project_settings(&template_settings_bytes)?;
-
-    let source_printer = string_field(&source_settings, "printer_model");
-    let colours_before = string_array_field(&source_settings, "filament_colour");
-    let colours_patched = source_has_patchable_colours(&source_settings);
-    graft_filament_colours(&mut grafted, &source_settings, opts.copy_filament_type);
-
-    let mut warnings = Vec::new();
-    let colour_warns = reorder_filament_colours(&mut grafted, &source_settings, &opts.slot_map);
-    warnings.extend(colour_warns.messages);
-
-    let colours_after = string_array_field(&grafted, "filament_colour");
-    let output_printer = string_field(&grafted, "printer_model");
-    let grafted_bytes = serialize_project_settings(&grafted)?;
-
-    // Bed size warn from source
-    if let Some((w, d)) = crate::settings::bed_size_mm(&source_settings)
-        && (w > 300.0 + 0.5 || d > 270.0 + 0.5)
-    {
-        warnings.push(format!(
-            "Source bed {w}×{d} mm exceeds typical ZR Ultra S 300×270 mm"
-        ));
-    }
-
-    // Pre-scan model_settings + paint for used slots; always validate dest ∈ 1..=4
-    // (including identity: slot 5→5 is out of ZR range and must error).
-    let model_settings_bytes = match read_member_bytes(&mut source_archive, MODEL_SETTINGS) {
-        Ok(b) => Some(b),
-        Err(Error::MissingMember(_)) => None,
-        Err(e) => return Err(e),
+    let archive_opts = ArchiveConvertOptions {
+        slot_map: opts.slot_map.clone(),
+        copy_filament_type: opts.copy_filament_type,
+        strict_bed: opts.strict_bed,
+        strategy: match resolved {
+            ResolvedStrategy::S1 => ConvertStrategy::S1,
+            ResolvedStrategy::S2 => ConvertStrategy::S2,
+        },
     };
 
-    let mut plates = None;
-    let mut used_sources: Vec<u8> = Vec::new();
-    if let Some(ref ms) = model_settings_bytes {
-        let summary = parse_model_settings(ms)?;
-        plates = Some(summary.plate_count);
-        used_sources.extend(summary.used_extruders());
-    }
+    // Write to a temp buffer then to disk so S1/S2 share archive path.
+    let mut out_buf = std::io::Cursor::new(Vec::new());
+    let mut report = convert_archives(
+        &mut source_archive,
+        &mut template_archive,
+        &mut out_buf,
+        &archive_opts,
+    )?;
 
-    let entries = crate::zip_util::list_entries(&mut source_archive)?;
-    for name in entries {
-        if is_3d_model_member(&name) {
-            match read_member_bytes(&mut source_archive, &name) {
-                Ok(bytes) => {
-                    let slots = collect_paint_source_slots(&bytes)?;
-                    used_sources.extend(slots);
-                }
-                Err(Error::MissingMember(_)) => {}
-                Err(e) => return Err(e),
-            }
-        }
-    }
-    used_sources.sort_unstable();
-    used_sources.dedup();
-    opts.slot_map
-        .validate_used_map_to_zr(used_sources.iter().copied())?;
-
-    for dest in opts
-        .slot_map
-        .many_to_one_dests(used_sources.iter().copied())
+    // Materialize to disk.
+    if let Some(parent) = opts.output.parent()
+        && !parent.as_str().is_empty()
+        && !parent.exists()
     {
-        warnings.push(format!(
-            "Many-to-one slot map into toolhead {dest} (first ascending source colour wins)"
-        ));
+        std::fs::create_dir_all(parent.as_std_path()).map_err(|e| Error::io(parent, e))?;
     }
+    std::fs::write(opts.output.as_std_path(), out_buf.into_inner())
+        .map_err(|e| Error::io(&opts.output, e))?;
 
-    let mut stripped_members = Vec::new();
-    let mut paint_attrs_seen = 0u32;
-    let mut paint_attrs_rewritten = 0u32;
-    let mut extruder_histogram_out: Option<BTreeMap<u8, u32>> = None;
-
-    let mut writer = create_writer(&opts.output)?;
-
-    // Process each source entry by index so we can raw_copy where possible.
-    drop(source_archive);
-    let source_file =
-        File::open(opts.source.as_std_path()).map_err(|e| Error::io(&opts.source, e))?;
-    let mut source_archive = ZipArchive::new(source_file)?;
-
-    let mut wrote_project_settings = false;
-    let mut wrote_slice_info = false;
-    let mut entry_count = 0usize;
-
-    let indices: Vec<(usize, String)> = {
-        let mut v = Vec::with_capacity(source_archive.len());
-        for i in 0..source_archive.len() {
-            let file = source_archive.by_index(i)?;
-            let name = normalize_zip_path(file.name());
-            if file.is_dir() || name.ends_with('/') {
-                continue;
-            }
-            v.push((i, name));
-        }
-        v
-    };
-
-    let identity = opts.slot_map.is_identity();
-
-    for (index, name) in indices {
-        if should_strip_member(&name) {
-            stripped_members.push(name);
-            continue;
-        }
-
-        if name == PROJECT_SETTINGS {
-            write_member(&mut writer, PROJECT_SETTINGS, &grafted_bytes)?;
-            wrote_project_settings = true;
-            entry_count += 1;
-            continue;
-        }
-
-        if name == SLICE_INFO {
-            write_member(&mut writer, SLICE_INFO, slice_info_stub())?;
-            wrote_slice_info = true;
-            entry_count += 1;
-            continue;
-        }
-
-        if name == MODEL_SETTINGS && !identity {
-            let bytes = read_member_bytes(&mut source_archive, MODEL_SETTINGS)?;
-            let (remapped, stats) = remap_model_settings_extruders(&bytes, &opts.slot_map)?;
-            extruder_histogram_out = Some(stats.histogram_out.clone());
-            write_member(&mut writer, MODEL_SETTINGS, &remapped)?;
-            entry_count += 1;
-            let _ = stats;
-            continue;
-        }
-
-        if is_3d_model_member(&name) && !identity {
-            let bytes = {
-                let mut file = source_archive.by_index(index)?;
-                let mut buf = Vec::new();
-                file.read_to_end(&mut buf)
-                    .map_err(|e| Error::io(format!("zip:{name}"), e))?;
-                buf
-            };
-            if let Some((remapped, stats)) = remap_model_paint(&bytes, &opts.slot_map)? {
-                paint_attrs_seen += stats.attrs_seen;
-                paint_attrs_rewritten += stats.attrs_rewritten;
-                for w in stats.residual_warnings {
-                    warnings.push(w);
-                }
-                write_member(&mut writer, &name, &remapped)?;
-                entry_count += 1;
-                continue;
-            }
-            // No paint_color — fall through to raw_copy
-        }
-
-        copy_source_member(&mut writer, &mut source_archive, index, &name)?;
-        entry_count += 1;
-    }
-
-    if !wrote_project_settings {
-        write_member(&mut writer, PROJECT_SETTINGS, &grafted_bytes)?;
-        entry_count += 1;
-    }
-    if !wrote_slice_info {
-        let _ = wrote_slice_info;
-    }
-
-    writer
-        .finish()
-        .map_err(|e| Error::msg(format!("failed to finish ZIP: {e}")))?;
-
-    stripped_members.sort();
-    stripped_members.dedup();
-
-    let had_gcode_stripped = stripped_members.iter().any(|m| {
-        std::path::Path::new(m)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("gcode"))
-            || m.ends_with("custom_gcode_per_layer.xml")
-    });
-
-    if had_gcode_stripped {
-        warnings.push(
-            "**Must re-slice in Wonderprint-Orca** — pre-sliced G-code / custom layer G-code was stripped and is not valid for ZR Ultra-S toolheads."
-                .to_string(),
-        );
-    }
-
-    // If identity, still expose input extruder histogram as output when available.
-    if extruder_histogram_out.is_none()
-        && let Some(ref ms) = model_settings_bytes
-        && let Ok(summary) = parse_model_settings(ms)
-    {
-        extruder_histogram_out = Some(summary.extruder_histogram);
-    }
-
-    drop(template_archive);
+    report.source = opts.source.clone();
+    report.template = opts.template.clone();
+    report.output = opts.output.clone();
 
     let report_path = if opts.write_report {
         let path = opts
             .report_path
             .clone()
             .unwrap_or_else(|| default_report_path(&opts.output));
+        write_report_file(&path, &report)?;
         Some(path)
     } else {
         None
     };
-
-    let report = ConversionReport {
-        source: opts.source.clone(),
-        template: opts.template.clone(),
-        output: opts.output.clone(),
-        source_printer,
-        output_printer,
-        stripped_members,
-        colours_patched,
-        slot_map_identity: identity,
-        slot_map_pairs: opts.slot_map.pairs(),
-        paint_attrs_seen,
-        paint_attrs_rewritten,
-        had_gcode_stripped,
-        report_path: report_path.clone(),
-        plates,
-        extruder_histogram_out,
-        colours_before,
-        colours_after,
-        warnings,
-        entry_count,
-    };
-
-    if let Some(ref path) = report_path {
-        write_report_file(path, &report)?;
-    }
+    report.report_path = report_path;
 
     Ok(report)
 }
 
-fn write_report_file(path: &Utf8Path, report: &ConversionReport) -> Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_str().is_empty()
-        && !parent.exists()
-    {
-        std::fs::create_dir_all(parent.as_std_path()).map_err(|e| Error::io(parent, e))?;
+/// Resolve Auto/S1/S2 against whether source has project_settings.
+pub fn resolve_strategy(
+    requested: ConvertStrategy,
+    source_has_project_settings: bool,
+) -> Result<ResolvedStrategy> {
+    match requested {
+        ConvertStrategy::Auto => {
+            if source_has_project_settings {
+                Ok(ResolvedStrategy::S1)
+            } else {
+                Ok(ResolvedStrategy::S2)
+            }
+        }
+        ConvertStrategy::S1 => {
+            if source_has_project_settings {
+                Ok(ResolvedStrategy::S1)
+            } else {
+                Err(Error::msg(
+                    "strategy S1 requires Metadata/project_settings.config in the source package; \
+                     use --strategy s2 or auto for geometry-only packages",
+                ))
+            }
+        }
+        ConvertStrategy::S2 => Ok(ResolvedStrategy::S2),
     }
-    let md = format_report_markdown(report);
-    std::fs::write(path.as_std_path(), md).map_err(|e| Error::io(path, e))?;
-    Ok(())
 }
 
-/// Convert using in-memory archives (for unit tests).
+/// Convert using in-memory archives (for unit tests and library callers).
 ///
 /// Writes the output ZIP bytes into `output_writer`. Does not write a markdown file
 /// (call [`format_report_markdown`] on the returned report if needed).
@@ -363,8 +288,56 @@ pub fn convert_archives<R1, R2, W>(
     source: &mut ZipArchive<R1>,
     template: &mut ZipArchive<R2>,
     output_writer: W,
-    slot_map: &SlotMap,
-    copy_filament_type: bool,
+    opts: &ArchiveConvertOptions,
+) -> Result<ConversionReport>
+where
+    R1: Read + Seek,
+    R2: Read + Seek,
+    W: Write + Seek,
+{
+    let has_ps = member_exists(source, PROJECT_SETTINGS);
+    let resolved = resolve_strategy(opts.strategy, has_ps)?;
+
+    match resolved {
+        ResolvedStrategy::S1 => convert_s1_archives(source, template, output_writer, opts),
+        ResolvedStrategy::S2 => {
+            let s2_opts = S2Options {
+                slot_map: opts.slot_map.clone(),
+                strict_bed: opts.strict_bed,
+            };
+            let build = convert_s2_archives(source, template, output_writer, &s2_opts)?;
+            Ok(ConversionReport {
+                source: Utf8PathBuf::from("memory://source"),
+                template: Utf8PathBuf::from("memory://template"),
+                output: Utf8PathBuf::from("memory://output"),
+                strategy: ResolvedStrategy::S2,
+                source_printer: build.source_printer,
+                output_printer: build.output_printer,
+                stripped_members: build.stripped_members,
+                colours_patched: build.colours_patched,
+                slot_map_identity: opts.slot_map.is_identity(),
+                slot_map_pairs: opts.slot_map.pairs(),
+                paint_attrs_seen: build.paint_attrs_seen,
+                paint_attrs_rewritten: build.paint_attrs_rewritten,
+                had_gcode_stripped: build.had_gcode_stripped,
+                report_path: None,
+                plates: build.plates,
+                extruder_histogram_out: build.extruder_histogram_out,
+                colours_before: build.colours_before,
+                colours_after: build.colours_after,
+                warnings: build.warnings,
+                entry_count: build.entry_count,
+                opc_reconciled: build.opc_reconciled,
+            })
+        }
+    }
+}
+
+fn convert_s1_archives<R1, R2, W>(
+    source: &mut ZipArchive<R1>,
+    template: &mut ZipArchive<R2>,
+    output_writer: W,
+    opts: &ArchiveConvertOptions,
 ) -> Result<ConversionReport>
 where
     R1: Read + Seek,
@@ -378,11 +351,22 @@ where
     let source_printer = string_field(&source_settings, "printer_model");
     let colours_before = string_array_field(&source_settings, "filament_colour");
     let colours_patched = source_has_patchable_colours(&source_settings);
-    graft_filament_colours(&mut grafted, &source_settings, copy_filament_type);
+    graft_filament_colours(&mut grafted, &source_settings, opts.copy_filament_type);
 
     let mut warnings = Vec::new();
-    let colour_warns = reorder_filament_colours(&mut grafted, &source_settings, slot_map);
+    let colour_warns = reorder_filament_colours(&mut grafted, &source_settings, &opts.slot_map);
     warnings.extend(colour_warns.messages);
+
+    // Bed compare source vs template (C2).
+    if let (Some(sb), Some(tb)) = (bed_size_mm(&source_settings), bed_size_mm(&grafted))
+        && bed_source_exceeds_template(sb, tb, BED_COMPARE_EPS_MM)
+    {
+        let msg = bed_compare_message(sb, tb);
+        if opts.strict_bed {
+            return Err(Error::msg(msg));
+        }
+        warnings.push(msg);
+    }
 
     let colours_after = string_array_field(&grafted, "filament_colour");
     let output_printer = string_field(&grafted, "printer_model");
@@ -400,15 +384,19 @@ where
         let summary = parse_model_settings(ms)?;
         plates = Some(summary.plate_count);
         used_sources.extend(summary.used_extruders());
+        for st in collect_unknown_subtypes(ms)? {
+            warnings.push(format!(
+                "Unsupported or unknown model_settings part subtype '{st}' (convert continues)"
+            ));
+        }
     }
 
-    let identity = slot_map.is_identity();
+    let identity = opts.slot_map.is_identity();
 
-    // Always collect paint slots and validate dest ∈ 1..=4 (identity 5→5 must error).
     let entry_names = crate::zip_util::list_entries(source)?;
-    for name in entry_names {
-        if is_3d_model_member(&name) {
-            match read_member_bytes(source, &name) {
+    for name in &entry_names {
+        if is_3d_model_member(name) {
+            match read_member_bytes(source, name) {
                 Ok(bytes) => {
                     used_sources.extend(collect_paint_source_slots(&bytes)?);
                 }
@@ -419,21 +407,18 @@ where
     }
     used_sources.sort_unstable();
     used_sources.dedup();
-    slot_map.validate_used_map_to_zr(used_sources.iter().copied())?;
-    for dest in slot_map.many_to_one_dests(used_sources.iter().copied()) {
+    opts.slot_map
+        .validate_used_map_to_zr(used_sources.iter().copied())?;
+    for dest in opts
+        .slot_map
+        .many_to_one_dests(used_sources.iter().copied())
+    {
         warnings.push(format!(
             "Many-to-one slot map into toolhead {dest} (first ascending source colour wins)"
         ));
     }
 
-    let mut writer = ZipWriter::new(output_writer);
-    let mut stripped_members = Vec::new();
-    let mut wrote_project_settings = false;
-    let mut entry_count = 0usize;
-    let mut paint_attrs_seen = 0u32;
-    let mut paint_attrs_rewritten = 0u32;
-    let mut extruder_histogram_out: Option<BTreeMap<u8, u32>> = None;
-
+    // First pass: stripped set for OPC.
     let indices: Vec<(usize, String)> = {
         let mut v = Vec::new();
         for i in 0..source.len() {
@@ -446,10 +431,37 @@ where
         }
         v
     };
+    let mut stripped_members: Vec<String> = indices
+        .iter()
+        .filter(|(_, name)| should_strip_member(name))
+        .map(|(_, name)| name.clone())
+        .collect();
+    stripped_members.sort();
+    stripped_members.dedup();
+    let stripped_set: BTreeSet<String> = stripped_members.iter().cloned().collect();
+
+    // Remaining extensions after strip (for optional gcode Default drop).
+    let remaining_names: Vec<String> = indices
+        .iter()
+        .filter(|(_, n)| !should_strip_member(n))
+        .map(|(_, n)| n.clone())
+        .collect();
+    let rem_ext = remaining_extensions(
+        remaining_names
+            .iter()
+            .chain(std::iter::once(&PROJECT_SETTINGS.to_string())),
+    );
+
+    let mut writer = ZipWriter::new(output_writer);
+    let mut wrote_project_settings = false;
+    let mut entry_count = 0usize;
+    let mut paint_attrs_seen = 0u32;
+    let mut paint_attrs_rewritten = 0u32;
+    let mut extruder_histogram_out: Option<BTreeMap<u8, u32>> = None;
+    let mut opc_reconciled = false;
 
     for (index, name) in indices {
         if should_strip_member(&name) {
-            stripped_members.push(name);
             continue;
         }
         if name == PROJECT_SETTINGS {
@@ -467,7 +479,7 @@ where
         if name == MODEL_SETTINGS && !identity {
             let bytes = read_member_bytes(source, MODEL_SETTINGS)?;
             let (remapped, stats): (Vec<u8>, ExtruderRemapStats) =
-                remap_model_settings_extruders(&bytes, slot_map)?;
+                remap_model_settings_extruders(&bytes, &opts.slot_map)?;
             extruder_histogram_out = Some(stats.histogram_out);
             write_member(&mut writer, MODEL_SETTINGS, &remapped)?;
             entry_count += 1;
@@ -482,7 +494,7 @@ where
                     .map_err(|e| Error::io(format!("zip:{name}"), e))?;
                 buf
             };
-            if let Some((remapped, stats)) = remap_model_paint(&bytes, slot_map)? {
+            if let Some((remapped, stats)) = remap_model_paint(&bytes, &opts.slot_map)? {
                 let PaintRemapStats {
                     attrs_seen,
                     attrs_rewritten,
@@ -497,6 +509,45 @@ where
             }
         }
 
+        // OPC reconcile Content_Types / rels after strip.
+        if is_content_types_member(&name) {
+            let bytes = {
+                let mut file = source.by_index(index)?;
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf)
+                    .map_err(|e| Error::io(format!("zip:{name}"), e))?;
+                buf
+            };
+            if !stripped_set.is_empty() {
+                let cleaned = strip_content_types_orphans(&bytes, &stripped_set, Some(&rem_ext))?;
+                write_member(&mut writer, CONTENT_TYPES, &cleaned)?;
+                opc_reconciled = true;
+            } else {
+                write_member(&mut writer, CONTENT_TYPES, &bytes)?;
+            }
+            entry_count += 1;
+            continue;
+        }
+        if is_rels_member(&name) {
+            let bytes = {
+                let mut file = source.by_index(index)?;
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf)
+                    .map_err(|e| Error::io(format!("zip:{name}"), e))?;
+                buf
+            };
+            if !stripped_set.is_empty() {
+                let parent = rels_parent_dir(&name);
+                let cleaned = strip_rels_orphans(&bytes, &stripped_set, &parent)?;
+                write_member(&mut writer, &name, &cleaned)?;
+                opc_reconciled = true;
+            } else {
+                write_member(&mut writer, &name, &bytes)?;
+            }
+            entry_count += 1;
+            continue;
+        }
+
         copy_source_member(&mut writer, source, index, &name)?;
         entry_count += 1;
     }
@@ -509,9 +560,6 @@ where
     writer
         .finish()
         .map_err(|e| Error::msg(format!("failed to finish ZIP: {e}")))?;
-
-    stripped_members.sort();
-    stripped_members.dedup();
 
     let had_gcode_stripped = stripped_members.iter().any(|m| {
         std::path::Path::new(m)
@@ -534,16 +582,19 @@ where
         extruder_histogram_out = Some(summary.extruder_histogram);
     }
 
+    let _ = template; // template only used for settings graft above
+
     Ok(ConversionReport {
         source: Utf8PathBuf::from("memory://source"),
         template: Utf8PathBuf::from("memory://template"),
         output: Utf8PathBuf::from("memory://output"),
+        strategy: ResolvedStrategy::S1,
         source_printer,
         output_printer,
         stripped_members,
         colours_patched,
         slot_map_identity: identity,
-        slot_map_pairs: slot_map.pairs(),
+        slot_map_pairs: opts.slot_map.pairs(),
         paint_attrs_seen,
         paint_attrs_rewritten,
         had_gcode_stripped,
@@ -554,7 +605,20 @@ where
         colours_after,
         warnings,
         entry_count,
+        opc_reconciled,
     })
+}
+
+fn write_report_file(path: &Utf8Path, report: &ConversionReport) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_str().is_empty()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent.as_std_path()).map_err(|e| Error::io(parent, e))?;
+    }
+    let md = format_report_markdown(report);
+    std::fs::write(path.as_std_path(), md).map_err(|e| Error::io(path, e))?;
+    Ok(())
 }
 
 /// True when source has non-empty colour arrays that graft will apply.
@@ -589,7 +653,14 @@ where
 /// Format conversion report for CLI stdout.
 pub fn format_report_human(r: &ConversionReport) -> String {
     let mut out = String::new();
-    out.push_str("Conversion complete (S1 settings graft)\n");
+    out.push_str(&format!(
+        "Conversion complete ({} {})\n",
+        r.strategy.as_str(),
+        match r.strategy {
+            ResolvedStrategy::S1 => "settings graft",
+            ResolvedStrategy::S2 => "template shell",
+        }
+    ));
     out.push_str(&format!("  Source:   {}\n", r.source));
     out.push_str(&format!("  Template: {}\n", r.template));
     out.push_str(&format!("  Output:   {}\n", r.output));
@@ -624,6 +695,9 @@ pub fn format_report_human(r: &ConversionReport) -> String {
         ));
     }
     out.push_str(&format!("  Entries written: {}\n", r.entry_count));
+    if r.opc_reconciled {
+        out.push_str("  OPC:      Content_Types/rels reconciled\n");
+    }
     if r.stripped_members.is_empty() {
         out.push_str("  Stripped: (none)\n");
     } else {
@@ -653,8 +727,10 @@ pub fn format_report_markdown(r: &ConversionReport) -> String {
     out.push_str(&format!("- **Source:** `{}`\n", r.source));
     out.push_str(&format!("- **Template:** `{}`\n", r.template));
     out.push_str(&format!("- **Output:** `{}`\n", r.output));
+    out.push_str(&format!("- **Strategy:** {}\n", r.strategy.as_str()));
     out.push_str(&format!("- **Entries written:** {}\n", r.entry_count));
     out.push_str(&format!("- **Colours patched:** {}\n", r.colours_patched));
+    out.push_str(&format!("- **OPC reconciled:** {}\n", r.opc_reconciled));
     if let Some(plates) = r.plates {
         out.push_str(&format!("- **Plates:** {plates}\n"));
     }

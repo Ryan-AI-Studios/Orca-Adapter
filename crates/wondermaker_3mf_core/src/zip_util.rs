@@ -26,6 +26,22 @@ pub fn list_entries<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<S
     Ok(names)
 }
 
+/// True if a member exists under the normalized name (exact or scan fallback).
+pub fn member_exists<R: Read + Seek>(archive: &mut ZipArchive<R>, member: &str) -> bool {
+    let target = normalize_zip_path(member);
+    if archive.by_name(&target).is_ok() {
+        return true;
+    }
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i)
+            && normalize_zip_path(file.name()) == target
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Read a ZIP member's full bytes by normalized name.
 ///
 /// Tries exact match first; falls back to scanning normalized names if the archive

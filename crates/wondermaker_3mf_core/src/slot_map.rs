@@ -132,15 +132,19 @@ impl SlotMap {
     /// Ensure every used source slot maps into ZR toolhead range 1..=4.
     ///
     /// Call with extruder/paint source slots actually present in the package.
+    /// On failure, the error lists used sources and a sample `--map` that merges
+    /// extras into toolhead 4 (no silent auto-merge).
     pub fn validate_used_map_to_zr(
         &self,
         used_sources: impl IntoIterator<Item = u8>,
     ) -> Result<()> {
+        let mut used_all: BTreeSet<u8> = BTreeSet::new();
         let mut bad: BTreeSet<(u8, u8)> = BTreeSet::new();
         for src in used_sources {
             if src == 0 {
                 continue;
             }
+            used_all.insert(src);
             let dest = self.map_slot(src);
             if !(1..=4).contains(&dest) {
                 bad.insert((src, dest));
@@ -150,10 +154,25 @@ impl SlotMap {
             return Ok(());
         }
         let detail: Vec<String> = bad.iter().map(|(s, d)| format!("{s}→{d}")).collect();
+        let used_list: Vec<String> = used_all.iter().map(|s| s.to_string()).collect();
+        // Build example map: identity for 1..=4 used slots, merge any extra into 4.
+        let mut example_pairs: Vec<String> = Vec::new();
+        for &src in &used_all {
+            let dest = if src <= 4 { src } else { 4 };
+            example_pairs.push(format!("{src}={dest}"));
+        }
+        let example = if example_pairs.is_empty() {
+            "1=1,2=2,3=3,4=4,5=4".to_string()
+        } else {
+            example_pairs.join(",")
+        };
         Err(Error::msg(format!(
             "used source slot(s) map outside ZR toolheads 1..=4: {}. \
-             Provide an explicit map into 1..=4, or reduce colours (merge UX lands in a later track).",
-            detail.join(", ")
+             Used sources: {}. \
+             Provide an explicit --map merging extras into 1..=4 \
+             (no automatic merge), e.g. --map {example}",
+            detail.join(", "),
+            used_list.join(", ")
         )))
     }
 

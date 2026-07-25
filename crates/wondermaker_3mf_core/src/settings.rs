@@ -43,9 +43,13 @@ pub fn string_array_field(settings: &Value, key: &str) -> Vec<String> {
     }
 }
 
+/// Epsilon (mm) when comparing source vs template bed bounds.
+pub const BED_COMPARE_EPS_MM: f64 = 0.5;
+
 /// Bed size inferred from `printable_area` corner strings like `"300x270"`.
 ///
-/// Returns `(width_mm, depth_mm)` as the max X and max Y seen in the polygon.
+/// Returns `(width_mm, depth_mm)` as the **max X and max Y** over parsed `"XxY"`
+/// polygon corners (not a scalar W×H field) — constraint **C2**.
 pub fn bed_size_mm(settings: &Value) -> Option<(f64, f64)> {
     let area = settings.get("printable_area")?.as_array()?;
     let mut max_x = 0.0_f64;
@@ -63,6 +67,18 @@ pub fn bed_size_mm(settings: &Value) -> Option<(f64, f64)> {
         max_y = max_y.max(y);
     }
     if any { Some((max_x, max_y)) } else { None }
+}
+
+/// True when source bed exceeds template bed in either dimension (plus `eps`).
+pub fn bed_source_exceeds_template(source: (f64, f64), template: (f64, f64), eps: f64) -> bool {
+    source.0 > template.0 + eps || source.1 > template.1 + eps
+}
+
+/// Warning / error text for source vs template bed compare.
+pub fn bed_compare_message(source: (f64, f64), template: (f64, f64)) -> String {
+    let (sw, sd) = source;
+    let (tw, td) = template;
+    format!("Source bed {sw}×{sd} mm vs template {tw}×{td} mm")
 }
 
 /// Colour graft policy (identity order):
@@ -355,6 +371,34 @@ mod tests {
             "printable_area": ["0x0", "300x0", "300x270", "0x270"]
         });
         assert_eq!(bed_size_mm(&s), Some((300.0, 270.0)));
+    }
+
+    #[test]
+    fn bed__polygon_max_bounds() {
+        // Non-rectangular polygon still uses max X/Y (C2).
+        let s = json!({
+            "printable_area": ["0x0", "250x10", "330x50", "100x320", "0x100"]
+        });
+        assert_eq!(bed_size_mm(&s), Some((330.0, 320.0)));
+    }
+
+    #[test]
+    fn bed_source_exceeds_template__compare() {
+        assert!(!bed_source_exceeds_template(
+            (300.0, 270.0),
+            (300.0, 270.0),
+            BED_COMPARE_EPS_MM
+        ));
+        assert!(bed_source_exceeds_template(
+            (330.0, 320.0),
+            (300.0, 270.0),
+            BED_COMPARE_EPS_MM
+        ));
+        assert!(!bed_source_exceeds_template(
+            (300.2, 270.2),
+            (300.0, 270.0),
+            BED_COMPARE_EPS_MM
+        ));
     }
 
     #[test]

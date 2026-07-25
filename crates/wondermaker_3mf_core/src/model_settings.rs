@@ -39,6 +39,10 @@ pub struct ExtruderRemapStats {
 }
 
 /// Parse model_settings.config bytes for plate count + extruder histogram.
+///
+/// **DoD-7:** element and attribute qnames must be valid UTF-8. Invalid qnames
+/// return `Error` on this path (including identity convert, which only parses
+/// then raw-copies `model_settings.config`).
 pub fn parse_model_settings(bytes: &[u8]) -> Result<ModelSettingsSummary> {
     let mut reader = Reader::from_reader(Cursor::new(bytes));
     reader.config_mut().trim_text(true);
@@ -49,6 +53,7 @@ pub fn parse_model_settings(bytes: &[u8]) -> Result<ModelSettingsSummary> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                validate_start_qnames(&e)?;
                 let name = e.name();
                 let local = local_name(name.as_ref());
                 if local == b"plate" {
@@ -87,6 +92,9 @@ pub fn parse_model_settings(bytes: &[u8]) -> Result<ModelSettingsSummary> {
                         *summary.extruder_histogram.entry(n).or_insert(0) += 1;
                     }
                 }
+            }
+            Ok(Event::End(e)) => {
+                validate_end_qname(&e)?;
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(Error::xml("model_settings.config", e)),
@@ -165,13 +173,13 @@ pub fn remap_model_settings_extruders(
                     let ctx = container_from_start(&local, &e)?;
                     if ctx.filament_bearing && !ctx.has_extruder && map.map_slot(1) != 1 {
                         let dest = map.map_slot(1);
-                        let name_str = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                        let name_str = qname_to_str(e.name().as_ref())?;
                         let mut start = BytesStart::new(name_str.clone());
                         for attr_result in e.attributes() {
                             let attr = attr_result.map_err(|err| {
                                 Error::msg(format!("model_settings attribute parse failed: {err}"))
                             })?;
-                            let k = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            let k = qname_to_str(attr.key.as_ref())?;
                             let v = attr
                                 .normalized_value(XmlVersion::Implicit1_0)
                                 .map_err(|err| {
@@ -208,7 +216,7 @@ pub fn remap_model_settings_extruders(
             }
             Ok(Event::End(e)) => {
                 let local = local_name(e.name().as_ref()).to_vec();
-                let name_str = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let name_str = qname_to_str(e.name().as_ref())?;
 
                 // Pop matching container and maybe inject before End.
                 if (local == b"part" || local == b"object")
@@ -364,7 +372,7 @@ fn rewrite_extruder_element(
         let attr = attr_result
             .map_err(|err| Error::msg(format!("model_settings attribute parse failed: {err}")))?;
         let an = local_name(attr.key.as_ref());
-        let key_str = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+        let key_str = qname_to_str(attr.key.as_ref())?;
         let av = attr
             .normalized_value(XmlVersion::Implicit1_0)
             .map_err(|err| Error::msg(format!("model_settings attribute normalize failed: {err}")))?
@@ -406,7 +414,7 @@ fn rewrite_extruder_element(
     }
     *stats.histogram_out.entry(dest).or_insert(0) += 1;
 
-    let name_str = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+    let name_str = qname_to_str(e.name().as_ref())?;
     let mut new_elem = BytesStart::new(name_str);
     // Preserve attribute order: key then value then others (typical Bambu order).
     new_elem.push_attribute(("key", "extruder"));
@@ -439,6 +447,29 @@ fn local_name(qname: &[u8]) -> &[u8] {
     qname.rsplit(|b| *b == b':').next().unwrap_or(qname)
 }
 
+/// Decode an XML qname to UTF-8. Invalid UTF-8 is a hard error (DoD-7 hygiene).
+fn qname_to_str(qname: &[u8]) -> Result<String> {
+    String::from_utf8(qname.to_vec())
+        .map_err(|_| Error::msg("model_settings: invalid UTF-8 in XML element/attribute qname"))
+}
+
+/// Validate Start/Empty element name and all attribute keys as UTF-8 (DoD-7).
+fn validate_start_qnames(e: &BytesStart<'_>) -> Result<()> {
+    qname_to_str(e.name().as_ref())?;
+    for attr_result in e.attributes() {
+        let attr = attr_result
+            .map_err(|err| Error::msg(format!("model_settings attribute parse failed: {err}")))?;
+        qname_to_str(attr.key.as_ref())?;
+    }
+    Ok(())
+}
+
+/// Validate End element name as UTF-8 (DoD-7).
+fn validate_end_qname(e: &BytesEnd<'_>) -> Result<()> {
+    qname_to_str(e.name().as_ref())?;
+    Ok(())
+}
+
 /// Count `paint_color` attribute occurrences in model XML (root or nested).
 ///
 /// Lightweight scan: count occurrences of the attribute name token in the file.
@@ -457,6 +488,190 @@ pub fn count_paint_color_attrs(bytes: &[u8]) -> u32 {
         }
     }
     count
+}
+
+/// Known `subtype` values on `<part>` (Bambu/Orca). Unknown subtypes warn only.
+const KNOWN_PART_SUBTYPES: &[&str] = &[
+    "normal_part",
+    "negative_part",
+    "modifier",
+    "parameter_modifier",
+    "support_enforcer",
+    "support_blocker",
+];
+
+/// Scan model_settings for unknown `subtype` attribute values (warn-only allowlist).
+///
+/// Returns sorted unique unknown subtype strings. Never fails convert by itself —
+/// XML parse errors still return `Err`.
+pub fn collect_unknown_subtypes(bytes: &[u8]) -> Result<Vec<String>> {
+    let mut reader = Reader::from_reader(Cursor::new(bytes));
+    reader.config_mut().trim_text(true);
+    let mut unknown: BTreeMap<String, ()> = BTreeMap::new();
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let local = local_name(e.name().as_ref()).to_vec();
+                if local == b"part" {
+                    for attr_result in e.attributes() {
+                        let attr = attr_result.map_err(|err| {
+                            Error::msg(format!("model_settings attribute parse failed: {err}"))
+                        })?;
+                        if local_name(attr.key.as_ref()) == b"subtype" {
+                            let v = attr
+                                .normalized_value(XmlVersion::Implicit1_0)
+                                .map_err(|err| {
+                                    Error::msg(format!(
+                                        "model_settings attribute normalize failed: {err}"
+                                    ))
+                                })?
+                                .into_owned();
+                            if !v.is_empty() && !KNOWN_PART_SUBTYPES.contains(&v.as_str()) {
+                                unknown.insert(v, ());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(Error::xml("model_settings subtype scan", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(unknown.into_keys().collect())
+}
+
+/// Object ids found in a 3MF root model (resources/build).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelObjectIds {
+    /// `<object id="…">` in resources (order of appearance).
+    pub resource_object_ids: Vec<u32>,
+    /// `<item objectid="…">` in build (order of appearance).
+    pub build_object_ids: Vec<u32>,
+}
+
+impl ModelObjectIds {
+    /// Prefer build items; fall back to resource object ids. Deduped, stable order.
+    pub fn printable_ids(&self) -> Vec<u32> {
+        let mut out = if self.build_object_ids.is_empty() {
+            self.resource_object_ids.clone()
+        } else {
+            self.build_object_ids.clone()
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        out.retain(|id| seen.insert(*id));
+        out
+    }
+}
+
+/// Parse object / build item ids from a root `3D/3dmodel.model` (streaming, no DOM).
+pub fn parse_model_object_ids(model_xml: &[u8]) -> Result<ModelObjectIds> {
+    let mut reader = Reader::from_reader(Cursor::new(model_xml));
+    reader.config_mut().trim_text(true);
+    let mut ids = ModelObjectIds::default();
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let local = local_name(e.name().as_ref()).to_vec();
+                if local == b"object"
+                    && let Some(id) = attr_u32(&e, b"id")?
+                {
+                    ids.resource_object_ids.push(id);
+                } else if local == b"item"
+                    && let Some(id) = attr_u32(&e, b"objectid")?
+                {
+                    ids.build_object_ids.push(id);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(Error::xml("3dmodel.model object ids", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(ids)
+}
+
+fn attr_u32(e: &BytesStart<'_>, key: &[u8]) -> Result<Option<u32>> {
+    for attr_result in e.attributes() {
+        let attr = attr_result
+            .map_err(|err| Error::msg(format!("model attribute parse failed: {err}")))?;
+        if local_name(attr.key.as_ref()) == key {
+            let v = attr
+                .normalized_value(XmlVersion::Implicit1_0)
+                .map_err(|err| Error::msg(format!("model attribute normalize failed: {err}")))?
+                .into_owned();
+            let n: u32 = v
+                .parse()
+                .map_err(|_| Error::msg(format!("model id is not a u32: '{v}'")))?;
+            return Ok(Some(n));
+        }
+    }
+    Ok(None)
+}
+
+/// Synthesize minimal Bambu/Orca-style `model_settings.config` for S2 (**C4**).
+///
+/// One plate (plater_id=1) plus an `<object>` / default extruder per printable id.
+/// Extruder defaults to `map.map_slot(1)` (usually 1).
+pub fn synthesize_model_settings(object_ids: &[u32], map: &SlotMap) -> Vec<u8> {
+    let dest = map.map_slot(1).max(1);
+    let mut out = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<config>
+"#,
+    );
+    let ids: Vec<u32> = if object_ids.is_empty() {
+        vec![1]
+    } else {
+        object_ids.to_vec()
+    };
+    for id in &ids {
+        out.push_str(&format!(
+            r#"  <object id="{id}">
+    <metadata key="name" value="object_{id}"/>
+    <metadata key="extruder" value="{dest}"/>
+    <part id="1" subtype="normal_part">
+      <metadata key="name" value="part_1"/>
+      <metadata key="extruder" value="{dest}"/>
+    </part>
+  </object>
+"#
+        ));
+    }
+    out.push_str(
+        r#"  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value="Plate 1"/>
+    <metadata key="locked" value="false"/>
+"#,
+    );
+    for (i, id) in ids.iter().enumerate() {
+        out.push_str(&format!(
+            r#"    <model_instance>
+      <metadata key="object_id" value="{id}"/>
+      <metadata key="instance_id" value="0"/>
+      <metadata key="identify_id" value="{}"/>
+    </model_instance>
+"#,
+            i + 1
+        ));
+    }
+    out.push_str("  </plate>\n  <assemble>\n");
+    for id in &ids {
+        out.push_str(&format!(
+            r#"    <assemble_item object_id="{id}" instance_id="0" transform="1 0 0 0 1 0 0 0 1 0 0 0" offset="0 0 0"/>
+"#
+        ));
+    }
+    out.push_str("  </assemble>\n</config>\n");
+    out.into_bytes()
 }
 
 #[cfg(test)]
@@ -590,5 +805,116 @@ mod tests {
         // Only the object extruder (1→2)
         assert_eq!(parsed.extruder_histogram.get(&2), Some(&1));
         assert!(!parsed.extruder_histogram.contains_key(&1));
+    }
+
+    #[test]
+    fn model_settings__invalid_utf8_qname__errors() {
+        // Helper still rejects non-UTF-8 qname bytes directly.
+        let bad = b"el\xFF";
+        let err = super::qname_to_str(bad).expect_err("must fail");
+        assert!(
+            err.to_string().contains("UTF-8") || err.to_string().contains("qname"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn parse_model_settings__invalid_utf8_element_qname__errors() {
+        // quick-xml accepts raw 0xFF in element names; DoD-7 requires Error on parse.
+        let xml = b"<?xml version=\"1.0\"?><config><el\xFFname/></config>";
+        let err = parse_model_settings(xml).expect_err("must fail on invalid element qname");
+        assert!(
+            err.to_string().contains("UTF-8") || err.to_string().contains("qname"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn parse_model_settings__invalid_utf8_attr_qname__errors() {
+        let xml =
+            b"<?xml version=\"1.0\"?><config><metadata ke\xFFy=\"extruder\" value=\"1\"/></config>";
+        let err = parse_model_settings(xml).expect_err("must fail on invalid attr qname");
+        assert!(
+            err.to_string().contains("UTF-8") || err.to_string().contains("qname"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn parse_model_settings__invalid_utf8_end_qname__errors() {
+        // Start name is valid UTF-8; End carries invalid UTF-8 — still Error (DoD-7).
+        // quick-xml returns End with the closing tag's raw name bytes.
+        let xml = b"<?xml version=\"1.0\"?><config><plate></pl\xFFate></config>";
+        let err = parse_model_settings(xml).expect_err("must fail on invalid end qname");
+        // May surface as UTF-8 qname Error or XML mismatch depending on parser checks.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("UTF-8")
+                || msg.contains("qname")
+                || matches!(err, Error::Xml { .. } | Error::Message(_)),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn remap_model_settings__invalid_utf8_element_qname__errors() {
+        // Rewrite path still rejects invalid qnames when End/metadata rewrite runs.
+        let xml = b"<?xml version=\"1.0\"?><config><object id=\"1\"><part id=\"1\" subtype=\"normal_part\"></par\xFFt></object></config>";
+        let map = SlotMap::from_pairs([(1, 2)]);
+        let err = remap_model_settings_extruders(xml, &map).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("UTF-8")
+                || msg.contains("qname")
+                || matches!(err, Error::Xml { .. } | Error::Message(_)),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn collect_unknown_subtypes__warns_on_unknown() {
+        let xml = br#"<?xml version="1.0"?>
+<config>
+  <object id="1">
+    <part id="1" subtype="normal_part"/>
+    <part id="2" subtype="fancy_bambu_only"/>
+  </object>
+</config>
+"#;
+        let unknown = collect_unknown_subtypes(xml).expect("scan");
+        assert_eq!(unknown, vec!["fancy_bambu_only".to_string()]);
+    }
+
+    #[test]
+    fn synthesize_model_settings__references_object_ids() {
+        let bytes = synthesize_model_settings(&[7, 9], &SlotMap::identity());
+        let text = String::from_utf8(bytes).expect("utf8");
+        assert!(text.contains("id=\"7\""));
+        assert!(text.contains("id=\"9\""));
+        assert!(text.contains("plater_id\" value=\"1\"") || text.contains("value=\"1\""));
+        assert!(text.contains("object_id\" value=\"7\"") || text.contains("object_id"));
+        let summary = parse_model_settings(text.as_bytes()).expect("parse");
+        assert_eq!(summary.plate_count, 1);
+        assert!(!summary.extruder_histogram.is_empty());
+    }
+
+    #[test]
+    fn parse_model_object_ids__resources_and_build() {
+        let xml = br#"<?xml version="1.0"?>
+<model>
+ <resources>
+  <object id="1" type="model"/>
+  <object id="2" type="model"/>
+ </resources>
+ <build>
+  <item objectid="2"/>
+  <item objectid="1"/>
+ </build>
+</model>
+"#;
+        let ids = parse_model_object_ids(xml).expect("parse");
+        assert_eq!(ids.resource_object_ids, vec![1, 2]);
+        assert_eq!(ids.build_object_ids, vec![2, 1]);
+        assert_eq!(ids.printable_ids(), vec![2, 1]);
     }
 }

@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use wondermaker_3mf_core::{
-    ConvertOptions, SlotMap, analyze, convert, default_output_path, format_analysis_human,
-    format_report_human,
+    ConvertOptions, ConvertStrategy, SlotMap, analyze, convert, default_output_path,
+    format_analysis_human, format_report_human,
 };
 
 #[derive(Parser, Debug)]
@@ -27,7 +27,7 @@ enum Commands {
         #[arg(long)]
         input: Utf8PathBuf,
     },
-    /// Convert via S1 settings graft (template project_settings + source colours).
+    /// Convert via S1 settings graft or S2 template shell (see --strategy).
     Convert {
         /// Source MakerWorld/Bambu project .3mf
         #[arg(long)]
@@ -50,7 +50,17 @@ enum Commands {
         /// Do not copy filament_type labels from source (keep template types)
         #[arg(long, default_value_t = false)]
         keep_template_filament_type: bool,
+        /// Error when source bed exceeds template bed (either dimension, eps ~0.5 mm)
+        #[arg(long, default_value_t = false)]
+        strict_bed: bool,
+        /// Conversion strategy: auto (default), s1 (settings graft), s2 (template shell)
+        #[arg(long, default_value = "auto", value_parser = parse_strategy)]
+        strategy: ConvertStrategy,
     },
+}
+
+fn parse_strategy(s: &str) -> std::result::Result<ConvertStrategy, String> {
+    s.parse::<ConvertStrategy>().map_err(|e| e.to_string())
 }
 
 fn main() -> Result<()> {
@@ -65,15 +75,41 @@ fn main() -> Result<()> {
             report,
             no_report,
             keep_template_filament_type,
-        } => cmd_convert(
-            input,
-            template,
-            output,
-            map,
-            report,
-            no_report,
-            keep_template_filament_type,
-        ),
+            strict_bed,
+            strategy,
+        } => {
+            if !input.exists() {
+                bail!("input not found: {input}");
+            }
+            if !template.exists() {
+                bail!("template not found: {template}");
+            }
+            let output = output.unwrap_or_else(|| default_output_path(&input));
+            let slot_map = match map {
+                Some(spec) => {
+                    SlotMap::parse(&spec).with_context(|| format!("invalid --map: {spec}"))?
+                }
+                None => SlotMap::identity(),
+            };
+
+            let opts = ConvertOptions {
+                source: input.clone(),
+                template: template.clone(),
+                output: output.clone(),
+                slot_map,
+                copy_filament_type: !keep_template_filament_type,
+                write_report: !no_report,
+                report_path: report,
+                strict_bed,
+                strategy,
+            };
+
+            let report = convert(&opts).with_context(|| {
+                format!("convert failed (input={input}, template={template}, output={output})")
+            })?;
+            print!("{}", format_report_human(&report));
+            Ok(())
+        }
     }
 }
 
@@ -83,39 +119,5 @@ fn cmd_analyze(input: Utf8PathBuf) -> Result<()> {
     }
     let analysis = analyze(&input).with_context(|| format!("analyze failed for {input}"))?;
     print!("{}", format_analysis_human(&analysis));
-    Ok(())
-}
-
-fn cmd_convert(
-    input: Utf8PathBuf,
-    template: Utf8PathBuf,
-    output: Option<Utf8PathBuf>,
-    map: Option<String>,
-    report: Option<Utf8PathBuf>,
-    no_report: bool,
-    keep_template_filament_type: bool,
-) -> Result<()> {
-    if !input.exists() {
-        bail!("input not found: {input}");
-    }
-    if !template.exists() {
-        bail!("template not found: {template}");
-    }
-    let output = output.unwrap_or_else(|| default_output_path(&input));
-    let slot_map = match map {
-        Some(spec) => SlotMap::parse(&spec).with_context(|| format!("invalid --map: {spec}"))?,
-        None => SlotMap::identity(),
-    };
-
-    let mut opts = ConvertOptions::new(&input, &template, &output);
-    opts.slot_map = slot_map;
-    opts.copy_filament_type = !keep_template_filament_type;
-    opts.write_report = !no_report;
-    opts.report_path = report;
-
-    let report = convert(&opts).with_context(|| {
-        format!("convert failed (input={input}, template={template}, output={output})")
-    })?;
-    print!("{}", format_report_human(&report));
     Ok(())
 }
