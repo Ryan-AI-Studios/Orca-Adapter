@@ -244,13 +244,29 @@ where
         output_members.insert(n, bytes);
     }
 
+    // Application stamp: Wonderprint-safe only (suppress Orca "3mf version newer" dialog).
+    let application_stamp = {
+        let candidate = match read_member_bytes(template, ROOT_MODEL) {
+            Ok(bytes) => crate::model_meta::read_application_metadata(&bytes),
+            Err(_) => None,
+        };
+        crate::model_meta::application_stamp_from_candidate(candidate.as_deref())
+    };
+
     // Inject geometry (respect strip — rare under 3D).
     for (name, bytes) in &source_members {
         if should_strip_member(name) {
             stripped_members.push(name.clone());
             continue;
         }
-        output_members.insert(name.clone(), bytes.clone());
+        let mut out = bytes.clone();
+        // Stamp Application on root model (and nested models that carry the tag).
+        if name == ROOT_MODEL
+            || crate::model_meta::read_application_metadata(&out).is_some()
+        {
+            out = crate::model_meta::ensure_application_metadata(&out, &application_stamp);
+        }
+        output_members.insert(name.clone(), out);
     }
 
     // Also strip any leftover strip-list members that appeared only on source Metadata

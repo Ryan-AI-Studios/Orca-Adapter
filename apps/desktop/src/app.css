@@ -42,6 +42,8 @@
   --radius-control: 5px;
   --titlebar-h: 44px;
   --sidebar-w: 256px;
+  /* Wider on Home so analysis + Convert fit without crowding main */
+  --sidebar-home-w: 300px;
   --sidebar-collapsed: 72px;
 
   font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;

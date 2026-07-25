@@ -12,6 +12,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::analyze_3mf,
             commands::validate_template,
+            commands::extract_plate_thumbnails,
             commands::convert_3mf,
             commands::path_exists,
             commands::open_output_folder,

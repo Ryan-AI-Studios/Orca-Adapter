@@ -50,7 +50,7 @@
       <li>Review analysis (printer, plates, colors, bed size).</li>
       <li>Map each used source slot to TH1–TH4. Merges are allowed and shown explicitly; slots are never dropped silently.</li>
       <li>Confirm the output path (default <code>{`{stem}`}-zr-ultra-s.3mf</code> beside the source).</li>
-      <li>Click <strong>Convert project</strong>.</li>
+      <li>Review project analysis in the <strong>left panel</strong>, then click <strong>Convert project</strong> there (under Help).</li>
     </ol>
   </section>
 

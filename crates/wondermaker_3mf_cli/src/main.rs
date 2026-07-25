@@ -41,12 +41,17 @@ enum Commands {
         /// Slot map SOURCE=DEST pairs, e.g. `1=2,2=1,3=3,4=4` (default: identity)
         #[arg(long)]
         map: Option<String>,
-        /// Markdown report path (default: <output-stem>-conversion-report.md)
+        /// Write a markdown conversion report (opt-in). Optional path; default is
+        /// <output-stem>-conversion-report.md beside the output.
         #[arg(long)]
         report: Option<Utf8PathBuf>,
-        /// Do not write a markdown conversion report
+        /// Write markdown report using the default path (same as --report without a path)
         #[arg(long, default_value_t = false)]
-        no_report: bool,
+        write_report: bool,
+        /// Copy source filament_colour onto toolheads (MakerWorld palette). Default keeps
+        /// template toolhead colours (your ZR loadout).
+        #[arg(long, default_value_t = false)]
+        copy_source_colours: bool,
         /// Do not copy filament_type labels from source (keep template types)
         #[arg(long, default_value_t = false)]
         keep_template_filament_type: bool,
@@ -73,7 +78,8 @@ fn main() -> Result<()> {
             output,
             map,
             report,
-            no_report,
+            write_report,
+            copy_source_colours,
             keep_template_filament_type,
             strict_bed,
             strategy,
@@ -92,14 +98,19 @@ fn main() -> Result<()> {
                 None => SlotMap::identity(),
             };
 
+            // --report [path] or --write-report enables the markdown file (opt-in).
+            let report_path = report;
+            let do_report = write_report || report_path.is_some();
+
             let opts = ConvertOptions {
                 source: input.clone(),
                 template: template.clone(),
                 output: output.clone(),
                 slot_map,
+                copy_source_colours,
                 copy_filament_type: !keep_template_filament_type,
-                write_report: !no_report,
-                report_path: report,
+                write_report: do_report,
+                report_path,
                 strict_bed,
                 strategy,
             };

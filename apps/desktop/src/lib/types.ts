@@ -4,6 +4,14 @@ export type FilamentDto = {
   type: string;
 };
 
+export type PlateThumbnailDto = {
+  plateIndex: number;
+  memberName: string;
+  mime: string;
+  /** data:image/png;base64,... */
+  dataUrl: string;
+};
+
 export type AnalysisDto = {
   path: string;
   fileName: string;
@@ -30,7 +38,10 @@ export type ConvertDto = {
   template: string;
   output: string;
   slotMap: string;
+  /** Keep template toolhead colours (default). Set true to push MakerWorld palette onto THs. */
+  copySourceColours?: boolean;
   copyFilamentType?: boolean;
+  /** Markdown report opt-in (default false). */
   writeReport?: boolean;
   reportPath?: string | null;
   strictBed?: boolean;

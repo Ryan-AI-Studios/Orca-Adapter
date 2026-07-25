@@ -8,6 +8,9 @@ use camino::{Utf8Path, Utf8PathBuf};
 use zip::{ZipArchive, ZipWriter};
 
 use crate::error::{Error, Result};
+use crate::model_meta::{
+    application_stamp_from_candidate, ensure_application_metadata, read_application_metadata,
+};
 use crate::model_settings::{
     ExtruderRemapStats, collect_unknown_subtypes, parse_model_settings,
     remap_model_settings_extruders,
@@ -18,8 +21,8 @@ use crate::opc::{
 };
 use crate::paint::{PaintRemapStats, collect_paint_source_slots, remap_model_paint};
 use crate::paths::{
-    MODEL_SETTINGS, PROJECT_SETTINGS, SLICE_INFO, default_report_path, is_3d_model_member,
-    normalize_zip_path, paths_equal, should_strip_member,
+    MODEL_SETTINGS, PROJECT_SETTINGS, ROOT_MODEL, SLICE_INFO, default_report_path,
+    is_3d_model_member, normalize_zip_path, paths_equal, should_strip_member,
 };
 use crate::s2::{S2Options, convert_s2_archives};
 use crate::settings::{
@@ -93,9 +96,13 @@ pub struct ConvertOptions {
     pub output: Utf8PathBuf,
     /// Source slot → ZR toolhead map. Identity leaves extruder/paint/colours in place order.
     pub slot_map: SlotMap,
-    /// When true (default), also copy `filament_type` labels from source (min-len).
+    /// When true, copy source `filament_colour` / multi onto toolheads (MakerWorld palette).
+    /// **Default false:** keep **template** filament colours (your ZR loadout) and only
+    /// remap geometry extruders/paint — matches the UI toolhead swatches.
+    pub copy_source_colours: bool,
+    /// When true, also copy `filament_type` labels from source (min-len).
     pub copy_filament_type: bool,
-    /// When true (default), write a markdown conversion report.
+    /// When true, write a markdown conversion report. **Default false** (opt-in).
     pub write_report: bool,
     /// Optional explicit report path; default is `<output-stem>-conversion-report.md`.
     pub report_path: Option<Utf8PathBuf>,
@@ -116,8 +123,9 @@ impl ConvertOptions {
             template: template.into(),
             output: output.into(),
             slot_map: SlotMap::identity(),
+            copy_source_colours: false,
             copy_filament_type: true,
-            write_report: true,
+            write_report: false,
             report_path: None,
             strict_bed: false,
             strategy: ConvertStrategy::Auto,
@@ -137,6 +145,8 @@ impl ConvertOptions {
 #[derive(Debug, Clone)]
 pub struct ArchiveConvertOptions {
     pub slot_map: SlotMap,
+    /// See [`ConvertOptions::copy_source_colours`].
+    pub copy_source_colours: bool,
     pub copy_filament_type: bool,
     pub strict_bed: bool,
     pub strategy: ConvertStrategy,
@@ -146,6 +156,7 @@ impl Default for ArchiveConvertOptions {
     fn default() -> Self {
         Self {
             slot_map: SlotMap::identity(),
+            copy_source_colours: false,
             copy_filament_type: true,
             strict_bed: false,
             strategy: ConvertStrategy::Auto,
@@ -156,6 +167,11 @@ impl Default for ArchiveConvertOptions {
 impl ArchiveConvertOptions {
     pub fn with_slot_map(mut self, map: SlotMap) -> Self {
         self.slot_map = map;
+        self
+    }
+
+    pub fn with_copy_source_colours(mut self, yes: bool) -> Self {
+        self.copy_source_colours = yes;
         self
     }
 }
@@ -207,6 +223,7 @@ pub fn convert(opts: &ConvertOptions) -> Result<ConversionReport> {
 
     let archive_opts = ArchiveConvertOptions {
         slot_map: opts.slot_map.clone(),
+        copy_source_colours: opts.copy_source_colours,
         copy_filament_type: opts.copy_filament_type,
         strict_bed: opts.strict_bed,
         strategy: match resolved {
@@ -333,6 +350,24 @@ where
     }
 }
 
+/// Application string to stamp on root (and nested) model XML so Wonderprint/Orca
+/// does not warn that the 3MF version is newer than the app (e.g. 2.6.0.51 vs 2.3.0.1).
+///
+/// Uses the template Application only when it is already Wonderprint-safe; otherwise
+/// forces [`crate::model_meta::DEFAULT_WONDERPRINT_APPLICATION`].
+fn application_from_template<R: Read + Seek>(template: &mut ZipArchive<R>) -> String {
+    let candidate = match read_member_bytes(template, ROOT_MODEL) {
+        Ok(bytes) => read_application_metadata(&bytes),
+        Err(_) => None,
+    };
+    application_stamp_from_candidate(candidate.as_deref())
+}
+
+/// Always ensure Application is set (rewrite existing tag or inject on root models).
+fn stamp_application(bytes: &[u8], application: &str) -> Vec<u8> {
+    ensure_application_metadata(bytes, application)
+}
+
 fn convert_s1_archives<R1, R2, W>(
     source: &mut ZipArchive<R1>,
     template: &mut ZipArchive<R2>,
@@ -344,18 +379,27 @@ where
     R2: Read + Seek,
     W: Write + Seek,
 {
+    let application_stamp = application_from_template(template);
     let source_settings_bytes = read_member_bytes(source, PROJECT_SETTINGS)?;
     let template_settings_bytes = read_member_bytes(template, PROJECT_SETTINGS)?;
     let source_settings = parse_project_settings(&source_settings_bytes)?;
     let mut grafted = parse_project_settings(&template_settings_bytes)?;
     let source_printer = string_field(&source_settings, "printer_model");
     let colours_before = string_array_field(&source_settings, "filament_colour");
-    let colours_patched = source_has_patchable_colours(&source_settings);
-    graft_filament_colours(&mut grafted, &source_settings, opts.copy_filament_type);
-
+    let mut colours_patched = false;
     let mut warnings = Vec::new();
-    let colour_warns = reorder_filament_colours(&mut grafted, &source_settings, &opts.slot_map);
-    warnings.extend(colour_warns.messages);
+
+    // Default: keep **template** filament colours (ZR loadout = UI toolhead swatches).
+    // Opt-in `copy_source_colours`: push MakerWorld palette onto toolheads + reorder by map.
+    if opts.copy_source_colours {
+        colours_patched = source_has_patchable_colours(&source_settings);
+        graft_filament_colours(&mut grafted, &source_settings, opts.copy_filament_type);
+        let colour_warns = reorder_filament_colours(&mut grafted, &source_settings, &opts.slot_map);
+        warnings.extend(colour_warns.messages);
+    } else if opts.copy_filament_type {
+        // Types only — do not touch filament_colour / multi_colour.
+        crate::settings::patch_filament_types_only(&mut grafted, &source_settings);
+    }
 
     // Bed compare source vs template (C2).
     if let (Some(sb), Some(tb)) = (bed_size_mm(&source_settings), bed_size_mm(&grafted))
@@ -486,7 +530,9 @@ where
             continue;
         }
 
-        if is_3d_model_member(&name) && !identity {
+        // Stamp Application on root model always (suppress Orca "created by BambuStudio"
+        // version dialog). Nested models rarely carry Application; rewrite is a no-op then.
+        if is_3d_model_member(&name) {
             let bytes = {
                 let mut file = source.by_index(index)?;
                 let mut buf = Vec::new();
@@ -494,19 +540,38 @@ where
                     .map_err(|e| Error::io(format!("zip:{name}"), e))?;
                 buf
             };
-            if let Some((remapped, stats)) = remap_model_paint(&bytes, &opts.slot_map)? {
-                let PaintRemapStats {
-                    attrs_seen,
-                    attrs_rewritten,
-                    residual_warnings,
-                } = stats;
-                paint_attrs_seen += attrs_seen;
-                paint_attrs_rewritten += attrs_rewritten;
-                warnings.extend(residual_warnings);
-                write_member(&mut writer, &name, &remapped)?;
+            let mut out_bytes = bytes;
+            let mut wrote = false;
+            if !identity {
+                if let Some((remapped, stats)) = remap_model_paint(&out_bytes, &opts.slot_map)? {
+                    let PaintRemapStats {
+                        attrs_seen,
+                        attrs_rewritten,
+                        residual_warnings,
+                    } = stats;
+                    paint_attrs_seen += attrs_seen;
+                    paint_attrs_rewritten += attrs_rewritten;
+                    warnings.extend(residual_warnings);
+                    out_bytes = remapped;
+                    wrote = true;
+                }
+            }
+            // Always stamp Application on the root model (Orca/Wonderprint version dialog).
+            // Nested models only when they already carry the tag.
+            let is_root = name == ROOT_MODEL;
+            if is_root || read_application_metadata(&out_bytes).is_some() {
+                let stamped = stamp_application(&out_bytes, &application_stamp);
+                if stamped != out_bytes || is_root || wrote {
+                    out_bytes = stamped;
+                    wrote = true;
+                }
+            }
+            if wrote {
+                write_member(&mut writer, &name, &out_bytes)?;
                 entry_count += 1;
                 continue;
             }
+            // Fall through to raw_copy only for nested models with no paint remap / no Application.
         }
 
         // OPC reconcile Content_Types / rels after strip.
@@ -671,6 +736,10 @@ pub fn format_report_human(r: &ConversionReport) -> String {
         "  Printer:  {} → {}\n",
         r.source_printer.as_deref().unwrap_or("?"),
         r.output_printer.as_deref().unwrap_or("?")
+    ));
+    out.push_str(&format!(
+        "  Application stamp: {}\n",
+        crate::model_meta::DEFAULT_WONDERPRINT_APPLICATION
     ));
     out.push_str(&format!(
         "  Colours patched from source: {}\n",

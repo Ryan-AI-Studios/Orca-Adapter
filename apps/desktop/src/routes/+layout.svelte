@@ -2,6 +2,8 @@
   import "../app.css";
   import { page } from "$app/stores";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { homeShell } from "$lib/homeShell.svelte";
+  import { formatBed, formatBytes } from "$lib/api";
 
   let { children } = $props();
 
@@ -34,7 +36,7 @@
   }
 
   const nav = [
-    { href: "/", label: "Convert", icon: "convert" },
+    { href: "/", label: "Home", icon: "home" },
     { href: "/help", label: "Help", icon: "help" },
   ];
 
@@ -42,6 +44,9 @@
     if (href === "/") return pathname === "/" || pathname === "";
     return pathname.startsWith(href);
   }
+
+  const onHome = $derived(isActive("/", $page.url.pathname));
+  const showHomeChrome = $derived(onHome && homeShell.active);
 </script>
 
 <div class="shell">
@@ -81,10 +86,10 @@
   </header>
 
   <div class="body">
-    <aside class="sidebar" data-testid="sidebar">
+    <aside class="sidebar" class:home-mode={showHomeChrome} data-testid="sidebar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
-          <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+          <svg width="48" height="48" viewBox="0 0 56 56" fill="none">
             <rect x="10" y="8" width="28" height="36" rx="3" stroke="var(--cyan)" stroke-width="2" />
             <path d="M18 18h12M18 24h12M18 30h8" stroke="var(--cyan)" stroke-width="1.8" stroke-linecap="round" opacity="0.85" />
             <path
@@ -109,11 +114,17 @@
             href={item.href}
             class="nav-item"
             class:selected={isActive(item.href, $page.url.pathname)}
-            data-testid={item.icon === "convert" ? "nav-convert" : "nav-help"}
+            data-testid={item.icon === "home" ? "nav-home" : "nav-help"}
           >
-            {#if item.icon === "convert"}
+            {#if item.icon === "home"}
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M4 6h8M12 6l-2-2M12 6l-2 2M16 14H8M8 14l2-2M8 14l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <path
+                  d="M3.5 9.5L10 3.5l6.5 6M5 8.5V16a1 1 0 001 1h3v-4h2v4h3a1 1 0 001-1V8.5"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             {:else}
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -126,7 +137,129 @@
         {/each}
       </nav>
 
-      <div class="sidebar-spacer"></div>
+      {#if showHomeChrome}
+        <div class="side-analysis" data-testid="side-analysis">
+          <div class="side-section-label">Analysis</div>
+
+          {#if homeShell.analyzing}
+            <div class="side-status">
+              <span class="spinner sm"></span>
+              <span>Analyzing…</span>
+            </div>
+          {:else if homeShell.analysisError}
+            <div class="side-status err">{homeShell.analysisError}</div>
+          {:else if homeShell.sourceAnalysis}
+            <div class="side-chips">
+              <span class="side-chip">{homeShell.sourceAnalysis.plateCount} plate{homeShell.sourceAnalysis.plateCount === 1 ? "" : "s"}</span>
+              <span class="side-chip">{homeShell.sourceAnalysis.coloredParts} part{homeShell.sourceAnalysis.coloredParts === 1 ? "" : "s"}</span>
+              <span class="side-chip">{homeShell.sourceAnalysis.colorCount} color{homeShell.sourceAnalysis.colorCount === 1 ? "" : "s"}</span>
+              <span class="side-chip">{formatBytes(homeShell.sourceAnalysis.fileSizeBytes)}</span>
+            </div>
+          {:else}
+            <p class="side-muted">Select a source project to analyze.</p>
+          {/if}
+
+          <table class="side-meta">
+            <tbody>
+              <tr>
+                <th>Printer</th>
+                <td>
+                  {#if homeShell.sourceAnalysis || homeShell.templateAnalysis}
+                    <span class="src">{homeShell.sourceAnalysis?.printerModel ?? "—"}</span>
+                    <span class="arr">→</span>
+                    <span class="dst">{homeShell.templateAnalysis?.printerModel ?? "—"}</span>
+                  {:else}
+                    —
+                  {/if}
+                </td>
+              </tr>
+              <tr>
+                <th>Color mode</th>
+                <td>{homeShell.sourceAnalysis?.colorMode ?? "—"}</td>
+              </tr>
+              <tr>
+                <th>Source slicer</th>
+                <td class="truncate" title={homeShell.sourceAnalysis?.application ?? ""}>
+                  {homeShell.sourceAnalysis?.application ?? "—"}
+                </td>
+              </tr>
+              <tr>
+                <th>Target</th>
+                <td class="dst">{homeShell.templateAnalysis?.printerModel ?? "—"}</td>
+              </tr>
+              <tr>
+                <th>Bed</th>
+                <td>
+                  {formatBed(homeShell.sourceAnalysis?.bedSizeMm)}
+                  {#if homeShell.templateAnalysis?.bedSizeMm}
+                    <span class="arr">→</span>
+                    <span class="dst">{formatBed(homeShell.templateAnalysis.bedSizeMm)}</span>
+                  {/if}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {#if homeShell.sourceAnalysis && homeShell.sourceAnalysis.plateCount > 0}
+            <div class="side-plates">
+              {#each Array(homeShell.sourceAnalysis.plateCount) as _, i}
+                {@const n = i + 1}
+                {@const thumb = homeShell.plateThumbs[n]}
+                {#if thumb}
+                  <button
+                    type="button"
+                    class="side-plate has-thumb"
+                    onclick={() => homeShell.onOpenPlate?.(n)}
+                    title="Enlarge plate {n}"
+                    aria-label="Enlarge plate {n} preview"
+                  >
+                    <img src={thumb.dataUrl} alt="Plate {n}" />
+                    <span>P{n}</span>
+                  </button>
+                {:else}
+                  <div class="side-plate">
+                    <span>P{n}</span>
+                    <span class="no-prev">No preview</span>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+
+          {#if homeShell.bedWarning}
+            <div class="side-bed-warn">{homeShell.bedWarning}</div>
+          {/if}
+
+          {#if homeShell.sourceAnalysis?.warnings?.length}
+            <ul class="side-warnings">
+              {#each homeShell.sourceAnalysis.warnings as w}
+                <li>{w}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {:else}
+        <div class="sidebar-spacer"></div>
+      {/if}
+
+      {#if showHomeChrome}
+        <div class="side-convert-wrap">
+          <button
+            type="button"
+            class="btn-side-convert"
+            data-testid="convert-btn"
+            disabled={!homeShell.canConvert}
+            onclick={() => homeShell.onConvert?.()}
+          >
+            {#if homeShell.converting}
+              <span class="spinner sm"></span>
+              {homeShell.progressStage ? homeShell.progressStage : "Converting…"}
+            {:else}
+              Convert project
+            {/if}
+          </button>
+        </div>
+      {/if}
 
       <div class="local-panel" data-testid="local-only" title="Conversion runs entirely on this PC">
         <span class="local-dot">●</span>
@@ -229,23 +362,29 @@
     background: var(--sidebar);
     display: flex;
     flex-direction: column;
-    padding: 16px 0 14px;
+    padding: 12px 0 12px;
     border-right: 1px solid #102432;
+    min-height: 0;
+  }
+
+  .sidebar.home-mode {
+    width: var(--sidebar-home-w);
+    min-width: var(--sidebar-home-w);
   }
 
   .brand {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    padding: 8px 14px 20px;
-    min-height: 190px;
+    gap: 8px;
+    padding: 4px 14px 12px;
+    flex-shrink: 0;
   }
 
   .brand-mark {
-    width: 104px;
-    height: 104px;
-    border-radius: 18px;
+    width: 72px;
+    height: 72px;
+    border-radius: 14px;
     background: var(--card);
     border: 1.5px solid var(--cyan);
     display: grid;
@@ -257,9 +396,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 650;
-    line-height: 25px;
+    line-height: 20px;
     color: var(--text);
     text-align: center;
   }
@@ -268,15 +407,16 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 0 14px;
+    padding: 0 12px;
+    flex-shrink: 0;
   }
 
   .nav-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    height: 60px;
-    padding: 0 16px;
+    height: 48px;
+    padding: 0 14px;
     border-radius: 8px;
     color: var(--text-secondary);
     text-decoration: none;
@@ -301,9 +441,237 @@
     flex: 1;
   }
 
+  .side-analysis {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 10px 10px 0;
+    padding: 12px 12px 10px;
+    border-radius: 8px;
+    background: var(--surface-1);
+    border: 1px solid #163040;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .side-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-label);
+  }
+
+  .side-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .side-status.err {
+    color: var(--red);
+    line-height: 1.35;
+  }
+
+  .side-muted {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.35;
+  }
+
+  .side-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .side-chip {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    color: var(--text-secondary);
+  }
+
+  .side-meta {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  .side-meta th {
+    text-align: left;
+    width: 34%;
+    padding: 5px 6px 5px 0;
+    color: var(--text-muted);
+    font-weight: 500;
+    vertical-align: top;
+    border-bottom: 1px solid #1a2e3a;
+  }
+
+  .side-meta td {
+    padding: 5px 0;
+    color: var(--text-secondary);
+    border-bottom: 1px solid #1a2e3a;
+    word-break: break-word;
+  }
+
+  .side-meta .src {
+    color: var(--text-secondary);
+  }
+
+  .side-meta .dst {
+    color: var(--cyan);
+  }
+
+  .side-meta .arr {
+    margin: 0 3px;
+    color: var(--text-muted);
+  }
+
+  .side-meta .truncate {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .side-plates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .side-plate {
+    width: 64px;
+    height: 52px;
+    border-radius: 5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    position: relative;
+    padding: 0;
+  }
+
+  .side-plate.has-thumb {
+    cursor: zoom-in;
+    color: #fff;
+  }
+
+  .side-plate.has-thumb:hover {
+    border-color: var(--cyan);
+  }
+
+  .side-plate img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .side-plate.has-thumb span {
+    position: relative;
+    z-index: 1;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+
+  .side-plate .no-prev {
+    font-size: 9px;
+  }
+
+  .side-bed-warn {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--amber-text);
+    background: var(--amber-surface);
+    border: 1px solid var(--amber-border);
+    border-radius: 5px;
+    padding: 7px 8px;
+  }
+
+  .side-warnings {
+    margin: 0;
+    padding-left: 16px;
+    font-size: 11px;
+    color: var(--amber-text);
+    line-height: 1.35;
+  }
+
+  .side-convert-wrap {
+    padding: 10px 12px 6px;
+    flex-shrink: 0;
+  }
+
+  .btn-side-convert {
+    width: 100%;
+    height: 48px;
+    border: 1px solid var(--cyan-btn-border);
+    border-radius: 8px;
+    background: var(--cyan-btn);
+    color: #04121d;
+    font-size: 15px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 0 12px;
+  }
+
+  .btn-side-convert:hover:not(:disabled) {
+    background: var(--cyan-btn-hover);
+  }
+
+  .btn-side-convert:active:not(:disabled) {
+    background: var(--cyan-btn-pressed);
+  }
+
+  .btn-side-convert:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(4, 18, 29, 0.25);
+    border-top-color: #04121d;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .spinner.sm {
+    width: 14px;
+    height: 14px;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   .local-panel {
-    margin: 0 20px 6px;
-    height: 50px;
+    margin: 4px 12px 4px;
+    min-height: 42px;
     border-radius: 8px;
     background: var(--green-surface);
     border: 1px solid var(--green-border);
@@ -311,7 +679,8 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 0 12px;
+    padding: 0 10px;
+    flex-shrink: 0;
   }
 
   .local-dot {
@@ -322,7 +691,7 @@
 
   .local-text {
     color: var(--green);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }
@@ -338,18 +707,29 @@
   }
 
   @media (max-width: 1180px) {
-    .sidebar {
+    .sidebar,
+    .sidebar.home-mode {
       width: var(--sidebar-collapsed);
       min-width: var(--sidebar-collapsed);
+    }
+    .brand-name,
+    .nav-label,
+    .local-text,
+    .side-analysis,
+    .side-convert-wrap .btn-side-convert {
+      /* keep convert icon-ish: still show button label truncated */
     }
     .brand-name,
     .nav-label,
     .local-text {
       display: none;
     }
+    .side-analysis {
+      display: none;
+    }
     .brand {
       min-height: auto;
-      padding-bottom: 12px;
+      padding-bottom: 8px;
     }
     .brand-mark {
       width: 44px;
@@ -370,8 +750,13 @@
       border-bottom-color: var(--cyan);
       border-left-color: transparent;
     }
+    .btn-side-convert {
+      font-size: 11px;
+      height: 40px;
+      padding: 0 4px;
+    }
     .local-panel {
-      margin: 0 10px;
+      margin: 0 8px;
       width: auto;
     }
   }

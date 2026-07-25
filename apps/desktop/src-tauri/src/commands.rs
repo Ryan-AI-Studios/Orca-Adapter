@@ -5,12 +5,13 @@ use std::str::FromStr;
 use camino::{Utf8Path, Utf8PathBuf};
 use tauri::{AppHandle, Emitter};
 use wondermaker_3mf_core::{
-    ConvertOptions, ConvertStrategy, SlotMap, analyze, convert, refuse_output_equals_input,
+    ConvertOptions, ConvertStrategy, SlotMap, analyze, convert,
+    extract_plate_thumbnails as extract_plate_thumbs_core, refuse_output_equals_input,
 };
 
 use crate::config;
 use crate::dto::{
-    AnalysisDto, AppConfigDto, ConversionReportDto, ConvertDto, ProgressEvent,
+    AnalysisDto, AppConfigDto, ConversionReportDto, ConvertDto, PlateThumbnailDto, ProgressEvent,
     default_output_beside,
 };
 
@@ -76,6 +77,26 @@ pub async fn validate_template(template_path: String) -> Result<AnalysisDto, Str
     Ok(AnalysisDto::from_analysis(analysis))
 }
 
+/// Extract plate preview PNGs from a project 3MF as data URLs for the WebView.
+///
+/// `max_plates` should be the analysis plate count (0 = auto-detect from entry names).
+#[tauri::command]
+pub async fn extract_plate_thumbnails(
+    source_path: String,
+    max_plates: u32,
+) -> Result<Vec<PlateThumbnailDto>, String> {
+    let path = utf8_path(&source_path)?;
+    require_3mf_path(&path, "source")?;
+    require_file(&path)?;
+    let thumbs = tauri::async_runtime::spawn_blocking(move || {
+        extract_plate_thumbs_core(&path, max_plates)
+    })
+    .await
+    .map_err(|e| format!("thumbnail task failed: {e}"))?
+    .map_err(err_display)?;
+    Ok(thumbs.into_iter().map(PlateThumbnailDto::from).collect())
+}
+
 fn parse_slot_map(spec: &str) -> Result<SlotMap, String> {
     let trimmed = spec.trim();
     if trimmed.is_empty() {
@@ -136,6 +157,7 @@ pub async fn convert_3mf(app: AppHandle, opts: ConvertDto) -> Result<ConversionR
         template: template.clone(),
         output: output.clone(),
         slot_map,
+        copy_source_colours: opts.copy_source_colours,
         copy_filament_type: opts.copy_filament_type,
         write_report: opts.write_report,
         report_path,
@@ -323,8 +345,9 @@ mod tests {
             template: template.clone(),
             output: out.clone(),
             slot_map: map,
+            copy_source_colours: false,
             copy_filament_type: true,
-            write_report: true,
+            write_report: false,
             report_path: None,
             strict_bed: false,
             strategy: ConvertStrategy::Auto,

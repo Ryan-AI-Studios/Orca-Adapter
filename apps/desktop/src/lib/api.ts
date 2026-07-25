@@ -4,6 +4,7 @@ import type {
   AppConfigDto,
   ConversionReportDto,
   ConvertDto,
+  PlateThumbnailDto,
 } from "./types";
 
 export function analyze3mf(sourcePath: string): Promise<AnalysisDto> {
@@ -12,6 +13,14 @@ export function analyze3mf(sourcePath: string): Promise<AnalysisDto> {
 
 export function validateTemplate(templatePath: string): Promise<AnalysisDto> {
   return invoke("validate_template", { templatePath });
+}
+
+/** Plate previews from Metadata/plate_N.png (etc.) as data URLs. */
+export function extractPlateThumbnails(
+  sourcePath: string,
+  maxPlates: number,
+): Promise<PlateThumbnailDto[]> {
+  return invoke("extract_plate_thumbnails", { sourcePath, maxPlates });
 }
 
 export function convert3mf(opts: ConvertDto): Promise<ConversionReportDto> {

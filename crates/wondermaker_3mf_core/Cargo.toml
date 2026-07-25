@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 quick-xml = { workspace = true }
 thiserror = { workspace = true }
 camino = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

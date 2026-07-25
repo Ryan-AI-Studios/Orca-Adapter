@@ -17,6 +17,7 @@
 pub mod analyze;
 pub mod convert;
 pub mod error;
+pub mod model_meta;
 pub mod model_settings;
 pub mod opc;
 pub mod paint;
@@ -24,6 +25,7 @@ pub mod paths;
 pub mod s2;
 pub mod settings;
 pub mod slot_map;
+pub mod thumbnails;
 pub mod zip_util;
 
 pub use analyze::{Analysis, FilamentInfo, analyze, analyze_archive, format_analysis_human};
@@ -33,9 +35,14 @@ pub use convert::{
     refuse_output_equals_input, resolve_strategy,
 };
 pub use error::{Error, Result};
+pub use model_meta::{
+    DEFAULT_WONDERPRINT_APPLICATION, application_stamp_from_candidate, ensure_application_metadata,
+    is_wonderprint_safe_application, read_application_metadata, rewrite_application_metadata,
+};
 pub use opc::normalize_opc_part_name;
 pub use paths::{default_output_path, default_report_path};
 pub use slot_map::SlotMap;
+pub use thumbnails::{PlateThumbnail, extract_plate_thumbnails, extract_plate_thumbnails_archive};
 
 #[cfg(test)]
 mod tests_synth;

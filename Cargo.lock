@@ -5130,6 +5130,7 @@ dependencies = [
 name = "wondermaker_3mf_core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "camino",
  "quick-xml",
  "serde",

@@ -276,10 +276,20 @@ fn convert_graft__output_project_settings__has_template_printer_model() {
         string_field(&settings, "printer_model").as_deref(),
         Some("WonderMaker ZR Ultra S")
     );
+
+    // Root model Application must be stamped from template so Orca does not warn
+    // "The 3MF was created by BambuStudio" for a foreign Studio version.
+    let root = read_member_bytes(&mut out_zip, ROOT_MODEL).expect("root model");
+    let app = crate::model_meta::read_application_metadata(&root);
+    assert_eq!(
+        app.as_deref(),
+        Some("BambuStudio-2.3.1"),
+        "Application should match Wonderprint template, got {app:?}"
+    );
 }
 
 #[test]
-fn colour_patch__source_colours_differ_from_template__output_has_source_filament_colour() {
+fn colour_patch__opt_in_copy_source_colours__output_has_source_filament_colour() {
     let source = build_source_zip();
     let template = build_template_zip();
     let mut src = open_mem(&source);
@@ -289,7 +299,7 @@ fn colour_patch__source_colours_differ_from_template__output_has_source_filament
         &mut src,
         &mut tpl,
         &mut out_buf,
-        &ArchiveConvertOptions::default(),
+        &ArchiveConvertOptions::default().with_copy_source_colours(true),
     )
     .expect("convert");
     let out_bytes = out_buf.into_inner();
@@ -301,7 +311,7 @@ fn colour_patch__source_colours_differ_from_template__output_has_source_filament
     assert_eq!(
         colours,
         vec!["#AABBCC", "#DDEEFF", "#112233", "#445566"],
-        "output colours must match source, not template white/yellow/red/blue"
+        "with copy_source_colours, output must match source palette"
     );
     let multi = string_array_field(&settings, "filament_multi_colour");
     assert_eq!(multi, vec!["#AABBCC", "#DDEEFF", "#112233", "#445566"]);
@@ -309,6 +319,30 @@ fn colour_patch__source_colours_differ_from_template__output_has_source_filament
     assert_eq!(
         string_array_field(&settings, "filament_settings_id"),
         vec!["tpl-A", "tpl-B", "tpl-C", "tpl-D"]
+    );
+}
+
+#[test]
+fn colour_default__keep_template_filament_colours() {
+    let source = build_source_zip();
+    let template = build_template_zip();
+    let mut src = open_mem(&source);
+    let mut tpl = open_mem(&template);
+    let mut out_buf = Cursor::new(Vec::new());
+    convert_archives(
+        &mut src,
+        &mut tpl,
+        &mut out_buf,
+        &ArchiveConvertOptions::default(), // copy_source_colours = false
+    )
+    .expect("convert");
+    let mut out_zip = open_mem(&out_buf.into_inner());
+    let ps = read_member_bytes(&mut out_zip, PROJECT_SETTINGS).expect("ps");
+    let settings = parse_project_settings(&ps).expect("parse");
+    // Template palette white/yellow/red/blue — not source AABBCC…
+    assert_eq!(
+        string_array_field(&settings, "filament_colour"),
+        vec!["#FFFFFF", "#FFFF00", "#FF0000", "#0000FF"]
     );
 }
 
@@ -879,7 +913,7 @@ fn convert_archives__paint_remap__rewrites_triangles() {
 }
 
 #[test]
-fn convert_archives__swap_map__colours_reordered() {
+fn convert_archives__swap_map__colours_reordered_when_copy_source() {
     let source = build_source_zip();
     let template = build_template_zip();
     let mut src = open_mem(&source);
@@ -890,7 +924,9 @@ fn convert_archives__swap_map__colours_reordered() {
         &mut src,
         &mut tpl,
         &mut out_buf,
-        &ArchiveConvertOptions::default().with_slot_map(map.clone()),
+        &ArchiveConvertOptions::default()
+            .with_slot_map(map.clone())
+            .with_copy_source_colours(true),
     )
     .expect("convert");
     let mut out_zip = open_mem(&out_buf.into_inner());
@@ -1587,7 +1623,8 @@ fn s2__auto_with_project_settings__still_s1() {
     )
     .expect("convert");
     assert_eq!(report.strategy.as_str(), "S1");
-    assert!(report.colours_patched);
+    // Default: keep template colours (copy_source_colours = false).
+    assert!(!report.colours_patched);
 }
 
 #[test]

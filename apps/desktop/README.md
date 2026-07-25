@@ -15,7 +15,20 @@ Desktop shell for **Wondermaker 3MF Converter** (3MF Profile Transplant): a Taur
 - SvelteKit + Vite frontend
 - `wondermaker_3mf_core` for analyze + convert
 
-## Develop
+## For end users (no server, no terminal)
+
+The shipping app is a normal Windows program. **Nobody needs to start a dev server.**
+
+From a built release (see below), give people one of:
+
+| File | How to use |
+| --- | --- |
+| `dist\3MF Profile Transplant.exe` | Double-click — portable, no install |
+| `dist\3MF Profile Transplant-setup.exe` | Run once, then open from Start menu |
+
+Requirements: Windows 10/11 64-bit and [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (usually already installed).
+
+## Develop (hot reload — developers only)
 
 ```powershell
 cd apps\desktop
@@ -23,19 +36,35 @@ pnpm install
 pnpm tauri dev
 ```
 
+`pnpm tauri dev` starts Vite for live UI reload. That is **not** how end users run the app.
+
 Frontend-only preview (no native convert):
 
 ```powershell
 pnpm dev
 ```
 
-## Build
+## Build a double-clickable app
+
+From the **repo root** (recommended — copies clean names into `dist\`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-desktop-app.ps1
+```
+
+Or manually:
 
 ```powershell
 cd apps\desktop
-pnpm build
+pnpm install
 pnpm tauri build
 ```
+
+Then open:
+
+- Portable binary: `target\release\desktop.exe` (same as `dist\3MF Profile Transplant.exe` after the script)
+- Installer: `target\release\bundle\nsis\*-setup.exe`
+- MSI: `target\release\bundle\msi\*.msi`
 
 ## Recommended IDE Setup
 

@@ -123,8 +123,13 @@ pub fn graft_filament_colours(
         }
     }
     if copy_filament_type {
-        patch_string_array_min_len(template_settings, source_settings, "filament_type");
+        patch_filament_types_only(template_settings, source_settings);
     }
+}
+
+/// Copy only `filament_type` labels (min-len); leave colours and profile IDs alone.
+pub fn patch_filament_types_only(template_settings: &mut Value, source_settings: &Value) {
+    patch_string_array_min_len(template_settings, source_settings, "filament_type");
 }
 
 /// Warnings produced while reordering colours under a non-identity map.

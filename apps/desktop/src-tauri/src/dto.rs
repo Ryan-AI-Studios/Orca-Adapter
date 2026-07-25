@@ -17,6 +17,28 @@ pub struct FilamentDto {
     pub type_: String,
 }
 
+/// Plate preview image extracted from the 3MF package.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlateThumbnailDto {
+    pub plate_index: u32,
+    pub member_name: String,
+    pub mime: String,
+    /// `data:image/png;base64,...` for `<img src>`.
+    pub data_url: String,
+}
+
+impl From<wondermaker_3mf_core::PlateThumbnail> for PlateThumbnailDto {
+    fn from(t: wondermaker_3mf_core::PlateThumbnail) -> Self {
+        Self {
+            plate_index: t.plate_index,
+            member_name: t.member_name,
+            mime: t.mime,
+            data_url: t.data_url,
+        }
+    }
+}
+
 /// Analysis result returned to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,9 +158,14 @@ pub struct ConvertDto {
     /// CLI-style map `1=2,2=1,…`. Empty or omit → identity (with used-slot validation done in UI).
     #[serde(default)]
     pub slot_map: String,
+    /// When true, copy MakerWorld filament colours onto toolheads. Default false keeps
+    /// template (ZR loadout) colours so they match the UI toolhead swatches.
+    #[serde(default)]
+    pub copy_source_colours: bool,
     #[serde(default = "default_true")]
     pub copy_filament_type: bool,
-    #[serde(default = "default_true")]
+    /// Markdown report is opt-in (default false).
+    #[serde(default)]
     pub write_report: bool,
     pub report_path: Option<String>,
     #[serde(default)]

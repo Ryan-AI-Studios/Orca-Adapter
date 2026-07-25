@@ -8,8 +8,8 @@
     basename,
     buildSlotMapString,
     convert3mf,
+    extractPlateThumbnails,
     formatBed,
-    formatBytes,
     getConfig,
     normalizeHex,
     openOutputFolder,
@@ -19,10 +19,12 @@
     usedSourceSlots,
     validateTemplate,
   } from "$lib/api";
+  import { clearHomeShell, publishHomeShell } from "$lib/homeShell.svelte";
   import type {
     AnalysisDto,
     ConversionReportDto,
     FlowPhase,
+    PlateThumbnailDto,
     ProgressEvent,
   } from "$lib/types";
 
@@ -48,6 +50,35 @@
   let sourceCardEl = $state<HTMLElement | null>(null);
   let templateCardEl = $state<HTMLElement | null>(null);
   let copyPathLabel = $state("Copy path");
+  /** plateIndex → thumbnail DTO */
+  let plateThumbs = $state<Record<number, PlateThumbnailDto>>({});
+  /** Which mapping row has its toolhead menu open (source slot), or null. */
+  let openThMenu = $state<number | null>(null);
+  /** Enlarged plate preview (lightbox). */
+  let plateLightbox = $state<PlateThumbnailDto | null>(null);
+  /** Opt-in markdown conversion report (default off). */
+  let writeReport = $state(false);
+  /**
+   * When false (default): keep template filament colours on TH1–4 (matches UI swatches).
+   * When true: copy MakerWorld source colours onto toolheads after mapping.
+   */
+  let copySourceColours = $state(false);
+
+  function closeThMenus() {
+    openThMenu = null;
+  }
+
+  function selectToolhead(slot: number, th: number) {
+    if (th >= 1 && th <= 4) {
+      slotDest = { ...slotDest, [slot]: th };
+    }
+    openThMenu = null;
+  }
+
+  function openPlatePreview(n: number) {
+    const t = plateThumbs[n];
+    if (t) plateLightbox = t;
+  }
 
   const phase = $derived.by((): FlowPhase => {
     if (converting) return "converting";
@@ -168,6 +199,7 @@
   async function setSource(path: string) {
     sourcePath = path;
     sourceAnalysis = null;
+    plateThumbs = {};
     report = null;
     convertError = null;
     analysisError = null;
@@ -177,12 +209,32 @@
       sourceAnalysis = a;
       initMapFromAnalysis(a);
       outputPath = await suggestOutputPath(path);
+      // Load plate previews after analysis (non-blocking for mapping UX)
+      try {
+        const thumbs = await extractPlateThumbnails(path, a.plateCount || 0);
+        const map: Record<number, PlateThumbnailDto> = {};
+        for (const t of thumbs) map[t.plateIndex] = t;
+        plateThumbs = map;
+      } catch {
+        plateThumbs = {};
+      }
     } catch (e) {
       analysisError = String(e);
       sourceAnalysis = null;
+      plateThumbs = {};
     } finally {
       analyzing = false;
     }
+  }
+
+  /** Template filament for toolhead 1..=4 (from Wonderprint project settings). */
+  function templateFilament(th: number): { colour: string; type: string } | null {
+    if (!templateAnalysis?.filaments?.length) return null;
+    const f = templateAnalysis.filaments.find((x) => x.index1based === th);
+    if (f) return { colour: f.colour, type: f.type };
+    // Fall back to 0-based array order
+    const byIdx = templateAnalysis.filaments[th - 1];
+    return byIdx ? { colour: byIdx.colour, type: byIdx.type } : null;
   }
 
   async function setTemplate(path: string) {
@@ -225,8 +277,9 @@
         template: templatePath,
         output: out,
         slotMap: buildSlotMapString(slotDest, usedSlots),
+        copySourceColours,
         copyFilamentType: true,
-        writeReport: true,
+        writeReport,
         strictBed: false,
         strategy: "auto",
       });
@@ -305,6 +358,26 @@
     }
   }
 
+  // Publish analysis + convert action into the left shell while Home is open.
+  $effect(() => {
+    publishHomeShell({
+      active: true,
+      canConvert,
+      converting,
+      analyzing,
+      progressStage,
+      analysisError,
+      bedWarning,
+      sourceAnalysis,
+      templateAnalysis,
+      plateThumbs,
+      onConvert: () => {
+        void runConvert();
+      },
+      onOpenPlate: (n) => openPlatePreview(n),
+    });
+  });
+
   onMount(() => {
     const unsubs: UnlistenFn[] = [];
     let disposed = false;
@@ -355,6 +428,7 @@
     return () => {
       disposed = true;
       for (const u of unsubs) u();
+      clearHomeShell();
     };
   });
 
@@ -467,7 +541,7 @@
     </div>
   </section>
 
-  <!-- Analysis status strip -->
+  <!-- Compact status (full analysis lives in the left sidebar) -->
   <section
     class="status-strip"
     class:error={!!analysisError}
@@ -493,21 +567,8 @@
     {:else if sourceAnalysis}
       <div class="status-row">
         <span class="status-icon ok" aria-hidden="true">✓</span>
-        <span class="status-msg ok">Analysis complete</span>
-        <div class="chips">
-          <span class="chip">{sourceAnalysis.plateCount} plate{sourceAnalysis.plateCount === 1 ? "" : "s"}</span>
-          <span class="chip">{sourceAnalysis.coloredParts} colored part{sourceAnalysis.coloredParts === 1 ? "" : "s"}</span>
-          <span class="chip">{sourceAnalysis.colorCount} color{sourceAnalysis.colorCount === 1 ? "" : "s"}</span>
-          <span class="chip">{formatBytes(sourceAnalysis.fileSizeBytes)}</span>
-        </div>
+        <span class="status-msg ok">Analysis complete — see left panel for project details</span>
       </div>
-      {#if sourceAnalysis.warnings?.length}
-        <ul class="analysis-warnings">
-          {#each sourceAnalysis.warnings as w}
-            <li>{w}</li>
-          {/each}
-        </ul>
-      {/if}
     {:else}
       <div class="status-row">
         <span class="status-msg muted">Select a source project to analyze</span>
@@ -515,104 +576,107 @@
     {/if}
   </section>
 
-  <!-- Analysis | Mapping -->
-  <section class="mid-grid">
-    <div class="panel">
-      <h2 class="panel-heading">Project analysis</h2>
-      <table class="meta-table">
-        <tbody>
-          <tr>
-            <th>Embedded printer</th>
-            <td>
-              {#if sourceAnalysis || templateAnalysis}
-                <span>{sourceAnalysis?.printerModel ?? "—"}</span>
-                <span class="arrow">→</span>
-                <span class="cyan-text">{templateAnalysis?.printerModel ?? "—"}</span>
-              {:else}
-                —
-              {/if}
-            </td>
-          </tr>
-          <tr>
-            <th>Color mode</th>
-            <td>{sourceAnalysis?.colorMode ?? "—"}</td>
-          </tr>
-          <tr>
-            <th>Source slicer</th>
-            <td>{sourceAnalysis?.application ?? "—"}</td>
-          </tr>
-          <tr>
-            <th>Target profile</th>
-            <td class="cyan-text">{templateAnalysis?.printerModel ?? "—"}</td>
-          </tr>
-          <tr>
-            <th>Bed size</th>
-            <td>
-              {formatBed(sourceAnalysis?.bedSizeMm)}
-              {#if templateAnalysis?.bedSizeMm}
-                <span class="arrow">→</span>
-                <span class="cyan-text">{formatBed(templateAnalysis.bedSizeMm)}</span>
-              {/if}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      {#if sourceAnalysis && sourceAnalysis.plateCount > 0}
-        <div class="plate-summaries">
-          {#each Array(sourceAnalysis.plateCount) as _, i}
-            <div class="plate-card">
-              <div class="plate-num">Plate {i + 1}</div>
-              <div class="plate-sub">Summary (no preview)</div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="plate-summaries muted-box">No plate data yet</div>
-      {/if}
-
-      {#if bedWarning}
-        <div class="bed-warn">{bedWarning}</div>
-      {/if}
-    </div>
-
+  <!-- Toolhead mapping (analysis moved to sidebar) -->
+  <section class="mid-grid single">
     <div class="panel" data-testid="map-panel">
       <h2 class="panel-heading">Toolhead mapping</h2>
       {#if !sourceAnalysis}
         <p class="muted-help">Analyze a source project to map colors to ZR Ultra-S toolheads (TH1–4).</p>
       {:else}
-        <div class="map-rows" class:disabled={analyzing || converting}>
+        {#if templateAnalysis}
+          <div class="th-legend" aria-label="Template toolhead filament colors">
+            <span class="th-legend-label">Your toolheads (template)</span>
+            {#each [1, 2, 3, 4] as th}
+              {@const tf = templateFilament(th)}
+              <div class="th-legend-item" title={tf ? `${tf.type || "filament"} ${normalizeHex(tf.colour)}` : "TH" + th}>
+                <span class="swatch sm" style:background={normalizeHex(tf?.colour ?? "")}></span>
+                <span class="th-legend-th">TH{th}</span>
+              </div>
+            {/each}
+          </div>
+          <p class="muted-help sm">
+            Left = model colours. Right = toolhead filaments from your template (kept in the output unless you enable “Copy source colours”).
+          </p>
+        {:else}
+          <p class="muted-help sm">Select a Wonderprint template to show toolhead filament colors.</p>
+        {/if}
+        <!-- Close open TH menus when clicking outside -->
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <div
+          class="map-rows"
+          class:disabled={analyzing || converting}
+          onclick={(e) => {
+            if (!(e.target as HTMLElement).closest?.(".th-picker")) closeThMenus();
+          }}
+        >
           {#each usedSlots as slot}
             {@const fil = filamentForSlot(slot)}
+            {@const destTh = slotDest[slot] ?? (slot <= 4 ? slot : 4)}
+            {@const tplFil = templateFilament(destTh)}
             <div class="map-row">
               <div class="src-box">
                 <span class="slot-label">Slot {slot}</span>
-                <span class="swatch" style:background={normalizeHex(fil.colour)}></span>
-                <span class="hex">{normalizeHex(fil.colour)}</span>
+                <span class="swatch" style:background={normalizeHex(fil.colour)} title={normalizeHex(fil.colour)}></span>
                 {#if fil.type}
                   <span class="ftype">{fil.type}</span>
                 {/if}
               </div>
               <span class="map-arrow" aria-hidden="true">→</span>
-              <label class="th-select-wrap">
-                <span class="sr-only">Toolhead for slot {slot}</span>
-                <select
-                  class="th-select"
-                  value={String(slotDest[slot] ?? (slot <= 4 ? slot : 4))}
-                  disabled={analyzing || converting}
-                  onchange={(e) => {
-                    const v = Number((e.currentTarget as HTMLSelectElement).value);
-                    if (v >= 1 && v <= 4) {
-                      slotDest = { ...slotDest, [slot]: v };
-                    }
-                  }}
-                >
-                  <option value="1">TH1</option>
-                  <option value="2">TH2</option>
-                  <option value="3">TH3</option>
-                  <option value="4">TH4</option>
-                </select>
-              </label>
+              <div class="th-box">
+                <div class="th-picker" class:open={openThMenu === slot}>
+                  <button
+                    type="button"
+                    class="th-picker-btn"
+                    disabled={analyzing || converting}
+                    aria-haspopup="listbox"
+                    aria-expanded={openThMenu === slot}
+                    aria-label="Map source slot {slot} to toolhead {destTh}"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      openThMenu = openThMenu === slot ? null : slot;
+                    }}
+                  >
+                    <span
+                      class="swatch"
+                      style:background={normalizeHex(tplFil?.colour ?? "")}
+                      title={tplFil ? `Template TH${destTh}: ${normalizeHex(tplFil.colour)}` : `TH${destTh}`}
+                    ></span>
+                    <span class="th-picker-label">TH{destTh}</span>
+                    {#if tplFil?.type}
+                      <span class="ftype">{tplFil.type}</span>
+                    {/if}
+                    <span class="th-caret" aria-hidden="true">▾</span>
+                  </button>
+                  {#if openThMenu === slot}
+                    <ul class="th-menu" role="listbox" aria-label="Toolheads">
+                      {#each [1, 2, 3, 4] as th}
+                        {@const optFil = templateFilament(th)}
+                        <li role="option" aria-selected={th === destTh}>
+                          <button
+                            type="button"
+                            class="th-menu-item"
+                            class:selected={th === destTh}
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              selectToolhead(slot, th);
+                            }}
+                          >
+                            <span
+                              class="swatch"
+                              style:background={normalizeHex(optFil?.colour ?? "")}
+                              title={optFil ? normalizeHex(optFil.colour) : ""}
+                            ></span>
+                            <span class="th-picker-label">TH{th}</span>
+                            {#if optFil?.type}
+                              <span class="ftype">{optFil.type}</span>
+                            {/if}
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
+              </div>
             </div>
           {/each}
         </div>
@@ -660,9 +724,22 @@
 
   <!-- Output / Convert -->
   <section class="output-row">
-    <button type="button" class="btn-secondary details-btn" onclick={() => (showDetails = true)} disabled={!sourceAnalysis && !report}>
-      Conversion details
-    </button>
+    <div class="output-opts">
+      <button type="button" class="btn-secondary details-btn" onclick={() => (showDetails = true)} disabled={!sourceAnalysis && !report}>
+        Conversion details
+      </button>
+      <label class="check-opt" title="Write a markdown conversion report beside the output">
+        <input type="checkbox" bind:checked={writeReport} disabled={converting} />
+        Write conversion report
+      </label>
+      <label
+        class="check-opt"
+        title="When unchecked (default), toolhead colours stay as your Wonderprint template loadout. When checked, MakerWorld source colours are copied onto the toolheads."
+      >
+        <input type="checkbox" bind:checked={copySourceColours} disabled={converting} />
+        Copy source colours onto toolheads
+      </label>
+    </div>
 
     <div class="output-field">
       <label class="output-label" for="out-path">Output filename</label>
@@ -682,20 +759,7 @@
       </div>
     </div>
 
-    <button
-      type="button"
-      class="btn-convert"
-      data-testid="convert-btn"
-      disabled={!canConvert}
-      onclick={runConvert}
-    >
-      {#if converting}
-        <span class="spinner"></span>
-        {progressStage ? progressStage : "Converting…"}
-      {:else}
-        Convert project
-      {/if}
-    </button>
+    <p class="convert-hint">Use <strong>Convert project</strong> in the left panel when ready.</p>
   </section>
 
   {#if phase === "success" && report}
@@ -823,6 +887,33 @@
   </div>
 {/if}
 
+{#if plateLightbox}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="modal-backdrop plate-lightbox-backdrop"
+    onclick={() => (plateLightbox = null)}
+    role="presentation"
+  >
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions a11y_interactive_supports_focus -->
+    <div
+      class="plate-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Plate {plateLightbox.plateIndex} preview"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="modal-head">
+        <h3>Plate {plateLightbox.plateIndex}</h3>
+        <button type="button" class="win-x" onclick={() => (plateLightbox = null)} aria-label="Close">×</button>
+      </div>
+      <div class="plate-lightbox-body">
+        <img src={plateLightbox.dataUrl} alt="Plate {plateLightbox.plateIndex} full preview" />
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .convert-page {
     display: flex;
@@ -832,19 +923,19 @@
   }
 
   .page-heading {
-    min-height: 82px;
-    margin-top: 4px;
+    min-height: 64px;
+    margin-top: 0;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .page-heading h1 {
     margin: 0;
-    font-size: 36px;
+    font-size: 30px;
     font-weight: 700;
-    line-height: 44px;
+    line-height: 38px;
     color: var(--text-title);
   }
 
@@ -1092,6 +1183,11 @@
     min-height: 300px;
   }
 
+  .mid-grid.single {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
   .panel {
     background: var(--card);
     border: 1px solid var(--border-card);
@@ -1142,13 +1238,13 @@
   .plate-summaries {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
     margin-bottom: 10px;
   }
 
   .plate-card {
-    width: 100px;
-    height: 72px;
+    width: 148px;
+    height: 108px;
     background: var(--surface-1);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -1157,16 +1253,230 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .plate-card.has-thumb {
+    justify-content: flex-end;
+  }
+
+  .plate-card.clickable {
+    cursor: zoom-in;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+  }
+
+  .plate-card.clickable:hover {
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 1px var(--cyan);
+  }
+
+  .plate-card.clickable:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+  }
+
+  .plate-thumb {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #0a1218;
+  }
+
+  .plate-lightbox-backdrop {
+    z-index: 1200;
+  }
+
+  .plate-lightbox {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-width: min(920px, 94vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+
+  .plate-lightbox-body {
+    padding: 12px 16px 16px;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #050d14;
+  }
+
+  .plate-lightbox-body img {
+    max-width: 100%;
+    max-height: min(72vh, 720px);
+    object-fit: contain;
+    border-radius: 4px;
   }
 
   .plate-num {
     font-size: 13px;
     font-weight: 600;
+    z-index: 1;
+  }
+
+  .plate-num.overlay {
+    width: 100%;
+    padding: 4px 6px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
+    font-size: 12px;
+    text-align: center;
   }
 
   .plate-sub {
     font-size: 11px;
     color: var(--text-muted);
+  }
+
+  .th-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .th-legend-label {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
+
+  .th-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .th-legend-th {
+    font-weight: 600;
+  }
+
+  .swatch.sm {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+  }
+
+  .muted-help.sm {
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+
+  .th-box {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    position: relative;
+  }
+
+  .th-picker {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .th-picker-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 40px;
+    padding: 6px 10px;
+    background: var(--input);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .th-picker-btn:hover:not(:disabled) {
+    border-color: var(--cyan);
+  }
+
+  .th-picker-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .th-picker-btn:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 1px;
+  }
+
+  .th-picker-label {
+    font-weight: 650;
+    min-width: 2.4em;
+  }
+
+  .th-caret {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .th-menu {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 40;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .th-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .th-menu-item:hover {
+    background: var(--cyan-surface);
+  }
+
+  .th-menu-item.selected {
+    background: var(--cyan-surface);
+    outline: 1px solid var(--cyan);
   }
 
   .muted-box {
@@ -1307,17 +1617,54 @@
   }
 
   .output-row {
-    min-height: 106px;
+    min-height: 88px;
     display: flex;
     align-items: flex-end;
     gap: 14px;
     flex-wrap: wrap;
-    padding: 16px 0 4px;
+    padding: 12px 0 4px;
+  }
+
+  .convert-hint {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+    align-self: center;
+    max-width: 220px;
+  }
+
+  .convert-hint strong {
+    color: var(--cyan);
+    font-weight: 650;
+  }
+
+  .output-opts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-self: center;
+    min-width: 200px;
   }
 
   .details-btn {
     height: 44px;
-    align-self: flex-end;
+    align-self: flex-start;
+  }
+
+  .check-opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .check-opt input {
+    accent-color: var(--cyan-dark);
+    width: 15px;
+    height: 15px;
   }
 
   .output-field {
