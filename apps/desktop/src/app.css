@@ -1,0 +1,122 @@
+:root {
+  --canvas: #081925;
+  --titlebar: #04121d;
+  --sidebar: #071a28;
+  --surface-1: #0d1f2b;
+  --surface-2: #102430;
+  --surface-3: #132936;
+  --card: #10222f;
+  --input: #11222e;
+  --border: #2a404d;
+  --border-card: #2b404d;
+  --border-strong: #405460;
+  --text: #f2f5f7;
+  --text-title: #f3f6f8;
+  --text-secondary: #c0c8ce;
+  --text-muted: #96a5af;
+  --text-label: #9aa8b2;
+  --text-subtitle: #a8b3bb;
+  --cyan: #2ad6df;
+  --cyan-dark: #159ba8;
+  --cyan-surface: #103744;
+  --cyan-btn: #159ba8;
+  --cyan-btn-border: #36d8e3;
+  --cyan-btn-hover: #1baab8;
+  --cyan-btn-pressed: #10818d;
+  --green: #79d74b;
+  --green-bright: #7bd94c;
+  --green-local: #72d84a;
+  --green-surface: #12351f;
+  --green-border: #39883c;
+  --amber: #f2ad32;
+  --amber-text: #f4b43b;
+  --amber-surface: #39280c;
+  --amber-border: #a87013;
+  --red: #ef5a5a;
+  --red-surface: #3a171b;
+  --nav-selected: #103344;
+  --nav-hover: #0d2938;
+  --chip-bg: #091a26;
+  --chip-border: #28404f;
+  --radius-card: 8px;
+  --radius-control: 5px;
+  --titlebar-h: 44px;
+  --sidebar-w: 256px;
+  --sidebar-collapsed: 72px;
+
+  font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--canvas);
+  color: var(--text);
+  user-select: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+a {
+  color: var(--cyan);
+}
+
+/* Scrollbars in main workspace */
+.main-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.main-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.main-scroll::-webkit-scrollbar-thumb {
+  background: #1e3545;
+  border-radius: 6px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}

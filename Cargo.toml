@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/wondermaker_3mf_core",
     "crates/wondermaker_3mf_cli",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

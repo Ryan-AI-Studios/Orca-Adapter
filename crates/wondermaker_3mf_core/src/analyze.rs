@@ -8,8 +8,9 @@ use zip::ZipArchive;
 
 use crate::error::{Error, Result};
 use crate::model_settings::{count_paint_color_attrs, parse_model_settings};
+use crate::paint::collect_paint_source_slots;
 use crate::paths::{
-    MODEL_SETTINGS, PROJECT_SETTINGS, ROOT_MODEL, is_geometry_member, normalize_zip_path,
+    MODEL_SETTINGS, PROJECT_SETTINGS, ROOT_MODEL, is_3d_model_member, normalize_zip_path,
 };
 use crate::settings::{bed_size_mm, parse_project_settings, string_array_field, string_field};
 use crate::zip_util::{list_entries, open_archive, read_member_bytes};
@@ -39,6 +40,9 @@ pub struct Analysis {
     pub has_paint_color: bool,
     /// Number of `paint_color=` occurrences across scanned model files.
     pub paint_color_count: u32,
+    /// Sorted unique 1-based source slots that must be mapped (histogram ∪ paint).
+    /// Defaults to `[1]` when neither extruder nor paint slots are present.
+    pub used_source_slots: Vec<u8>,
     /// Normalized ZIP member names.
     pub entries: Vec<String>,
     pub has_gcode: bool,
@@ -117,8 +121,17 @@ pub fn analyze_archive<R: Read + Seek>(
         Err(e) => return Err(e),
     };
 
-    let paint_color_count = scan_paint_colors(archive, &entries)?;
+    let (paint_color_count, paint_slots) = scan_paint_colors_and_slots(archive, &entries)?;
     let has_paint_color = paint_color_count > 0;
+
+    // Union extruder histogram keys + paint-decoded slots (same set convert validates).
+    let mut used_source_slots: Vec<u8> = extruder_histogram.keys().copied().collect();
+    used_source_slots.extend(paint_slots);
+    used_source_slots.sort_unstable();
+    used_source_slots.dedup();
+    if used_source_slots.is_empty() {
+        used_source_slots.push(1);
+    }
 
     let mut warnings = settings_warnings;
     if has_gcode {
@@ -137,6 +150,7 @@ pub fn analyze_archive<R: Read + Seek>(
         extruder_histogram,
         has_paint_color,
         paint_color_count,
+        used_source_slots,
         entries,
         has_gcode,
         warnings,
@@ -170,26 +184,30 @@ fn find_metadata_value(xml: &str, name: &str) -> Option<String> {
     Some(rest[..end].trim().to_string())
 }
 
-fn scan_paint_colors<R: Read + Seek>(
+/// Scan geometry `.model` members for paint_color attrs and decode used source slots.
+fn scan_paint_colors_and_slots<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     entries: &[String],
-) -> Result<u32> {
+) -> Result<(u32, Vec<u8>)> {
     let mut total = 0u32;
+    let mut slots: Vec<u8> = Vec::new();
     for name in entries {
         let n = normalize_zip_path(name);
-        if !is_geometry_member(&n) {
-            continue;
-        }
-        if !n.ends_with(".model") {
+        if !is_3d_model_member(&n) {
             continue;
         }
         match read_member_bytes(archive, &n) {
-            Ok(bytes) => total = total.saturating_add(count_paint_color_attrs(&bytes)),
+            Ok(bytes) => {
+                total = total.saturating_add(count_paint_color_attrs(&bytes));
+                slots.extend(collect_paint_source_slots(&bytes)?);
+            }
             Err(Error::MissingMember(_)) => {}
             Err(e) => return Err(e),
         }
     }
-    Ok(total)
+    slots.sort_unstable();
+    slots.dedup();
+    Ok((total, slots))
 }
 
 /// Format analysis as human-readable text for CLI stdout.
@@ -233,6 +251,13 @@ pub fn format_analysis_human(a: &Analysis) -> String {
         for (ex, count) in &a.extruder_histogram {
             out.push_str(&format!("  extruder {ex}: {count}\n"));
         }
+    }
+    out.push_str("Used source slots (must map): ");
+    if a.used_source_slots.is_empty() {
+        out.push_str("(none)\n");
+    } else {
+        let list: Vec<String> = a.used_source_slots.iter().map(|s| s.to_string()).collect();
+        out.push_str(&format!("{}\n", list.join(", ")));
     }
     out.push_str(&format!("ZIP entries: {}\n", a.entries.len()));
     if !a.warnings.is_empty() {

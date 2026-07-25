@@ -233,6 +233,7 @@ fn analyze_synthetic__reports_printer_plates_filaments_paint_flag() {
     assert_eq!(a.extruder_histogram.get(&1), Some(&2)); // object + part
     assert_eq!(a.extruder_histogram.get(&2), Some(&1));
     assert_eq!(a.extruder_histogram.get(&3), Some(&1));
+    assert_eq!(a.used_source_slots, vec![1, 2, 3]);
     assert!(a.has_gcode);
 }
 
@@ -604,6 +605,30 @@ fn analyze__missing_optional_members__still_ok() {
     assert_eq!(a.plate_count, 0);
     assert!(a.extruder_histogram.is_empty());
     assert_eq!(a.filaments.len(), 2);
+    // No extruder/paint → default used slot [1] (UI must still map something).
+    assert_eq!(a.used_source_slots, vec![1]);
+}
+
+/// Paint-decoded slots are unioned into used_source_slots with extruder histogram.
+#[test]
+fn analyze__painted_model__used_source_slots_includes_paint() {
+    let bytes = build_source_zip_painted();
+    let mut archive = open_mem(&bytes);
+    let a = analyze_archive(&mut archive, "painted.3mf").expect("analyze");
+    assert!(a.has_paint_color);
+    // Histogram keys 1,2,3; paint "4"→slot1, "DC"→slot16
+    assert!(a.used_source_slots.contains(&1));
+    assert!(a.used_source_slots.contains(&2));
+    assert!(a.used_source_slots.contains(&3));
+    assert!(
+        a.used_source_slots.contains(&16),
+        "paint code DC (slot 16) must be in used_source_slots: {:?}",
+        a.used_source_slots
+    );
+    // Sorted unique
+    let mut sorted = a.used_source_slots.clone();
+    sorted.sort_unstable();
+    assert_eq!(a.used_source_slots, sorted);
 }
 
 // --- 0002: paint / remap / report integration ---
